@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     qdrant_location: str | None = None
 
     top_k: int = 5
+    relevance_min_lexical_score: float = 0.12
+    relevance_min_dense_score: float = 0.92
+    relevance_min_final_score: float = 0.12
+    relevance_min_meaningful_terms: int = 2
     default_chunker_type: str = "recursive"
     default_chunk_size: int = 700
     default_chunk_overlap: int = 120
@@ -68,6 +72,14 @@ class Settings(BaseSettings):
             raise ValueError("QDRANT_VECTOR_SIZE must be positive.")
         if self.top_k <= 0:
             raise ValueError("TOP_K must be positive.")
+        if not 0 <= self.relevance_min_lexical_score <= 1:
+            raise ValueError("RELEVANCE_MIN_LEXICAL_SCORE must be between 0 and 1.")
+        if not 0 <= self.relevance_min_dense_score <= 1:
+            raise ValueError("RELEVANCE_MIN_DENSE_SCORE must be between 0 and 1.")
+        if not 0 <= self.relevance_min_final_score <= 1:
+            raise ValueError("RELEVANCE_MIN_FINAL_SCORE must be between 0 and 1.")
+        if self.relevance_min_meaningful_terms < 0:
+            raise ValueError("RELEVANCE_MIN_MEANINGFUL_TERMS must be non-negative.")
         if self.default_chunk_overlap >= self.default_chunk_size:
             raise ValueError("DEFAULT_CHUNK_OVERLAP must be smaller than DEFAULT_CHUNK_SIZE.")
         if self.embed_provider == "openai" and not self.openai_api_key:

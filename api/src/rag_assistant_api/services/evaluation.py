@@ -42,30 +42,58 @@ class EvaluationService:
             recall_scores = []
             reciprocal_ranks = []
             faithfulness_scores = []
+            abstention_scores = []
+            unsupported_answer_count = 0
+            no_answer_count = 0
+            citation_relevance_scores = []
             by_filter = defaultdict(lambda: {"examples": 0, "hits": 0})
             for row in dataset:
+                should_answer = row.get("should_answer", True)
                 query_request = QueryRequest(
                     question=row["question"],
                     document_ids=row.get("document_ids", []),
                     category=row.get("category"),
+                    date_from=row.get("date_from"),
+                    date_to=row.get("date_to"),
                     top_k=request.top_k or self.settings.top_k,
                 )
                 response = self.query_service.answer_question(query_request)
                 expected_ids = set(row.get("expected_document_ids", []))
                 actual_ids = [citation.document_id for citation in response.citations]
                 hits = [item for item in actual_ids if item in expected_ids]
-                precision = len(hits) / max(1, request.top_k or self.settings.top_k)
-                hit_rate = 1.0 if hits else 0.0
-                recall = len(set(hits)) / max(1, len(expected_ids))
-                first_relevant_rank = next((index + 1 for index, item in enumerate(actual_ids) if item in expected_ids), None)
-                reciprocal_rank = 1 / first_relevant_rank if first_relevant_rank else 0.0
-                precision_scores.append(precision)
-                hit_rates.append(hit_rate)
-                recall_scores.append(recall)
-                reciprocal_ranks.append(reciprocal_rank)
+                answered = response.grounded and bool(response.used_citation_ids)
+                abstained = not answered
+                if should_answer:
+                    precision = len(hits) / max(1, request.top_k or self.settings.top_k)
+                    hit_rate = 1.0 if hits else 0.0
+                    recall = len(set(hits)) / max(1, len(expected_ids))
+                    first_relevant_rank = next((index + 1 for index, item in enumerate(actual_ids) if item in expected_ids), None)
+                    reciprocal_rank = 1 / first_relevant_rank if first_relevant_rank else 0.0
+                    precision_scores.append(precision)
+                    hit_rates.append(hit_rate)
+                    recall_scores.append(recall)
+                    reciprocal_ranks.append(reciprocal_rank)
+                else:
+                    precision = 0.0
+                    hit_rate = 1.0 if abstained else 0.0
+                    recall = 0.0
+                    reciprocal_rank = 0.0
+                    no_answer_count += 1
+                    abstention_scores.append(1.0 if abstained else 0.0)
+                    unsupported_answer_count += 0 if abstained else 1
                 filter_key = row.get("category") or "all"
                 by_filter[filter_key]["examples"] += 1
                 by_filter[filter_key]["hits"] += int(hit_rate)
+                used_doc_ids = {
+                    citation.document_id
+                    for citation in response.citations
+                    if citation.chunk_id in set(response.used_citation_ids)
+                }
+                if should_answer:
+                    citation_relevance = 1.0 if used_doc_ids & expected_ids else 0.0
+                else:
+                    citation_relevance = 1.0 if abstained else 0.0
+                citation_relevance_scores.append(citation_relevance)
                 faithfulness = self.llm_provider.judge_faithfulness(
                     row["question"],
                     response.answer,
@@ -76,8 +104,12 @@ class EvaluationService:
                     {
                         "id": row.get("id"),
                         "question": row["question"],
+                        "should_answer": should_answer,
                         "expected_document_ids": list(expected_ids),
                         "actual_document_ids": actual_ids,
+                        "used_document_ids": sorted(used_doc_ids),
+                        "abstained": abstained,
+                        "citation_relevance": citation_relevance,
                         "precision_at_k": precision,
                         "hit_rate": hit_rate,
                         "recall_at_k": recall,
@@ -93,6 +125,12 @@ class EvaluationService:
                 "recall_at_k": round(sum(recall_scores) / max(1, len(recall_scores)), 4),
                 "mrr": round(sum(reciprocal_ranks) / max(1, len(reciprocal_ranks)), 4),
                 "faithfulness_score": round(sum(faithfulness_scores) / max(1, len(faithfulness_scores)), 4),
+                "abstention_accuracy": round(sum(abstention_scores) / max(1, len(abstention_scores)), 4),
+                "unsupported_answer_rate": round(unsupported_answer_count / max(1, no_answer_count), 4),
+                "citation_relevance_rate": round(
+                    sum(citation_relevance_scores) / max(1, len(citation_relevance_scores)), 4
+                ),
+                "no_answer_examples": no_answer_count,
                 "by_filter": {
                     key: {"examples": value["examples"], "hit_rate": round(value["hits"] / max(1, value["examples"]), 4)}
                     for key, value in by_filter.items()
@@ -120,5 +158,8 @@ class EvaluationService:
         if not row.get("question"):
             raise ValueError(f"{dataset_name}:{line_number} is missing question.")
         expected = row.get("expected_document_ids")
-        if not isinstance(expected, list) or not expected:
+        should_answer = row.get("should_answer", True)
+        if not isinstance(expected, list):
             raise ValueError(f"{dataset_name}:{line_number} must include expected_document_ids.")
+        if should_answer and not expected:
+            raise ValueError(f"{dataset_name}:{line_number} must include expected_document_ids when should_answer is true.")

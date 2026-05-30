@@ -10,6 +10,7 @@ Production-grade RAG assistant built with FastAPI, Qdrant, durable SQL-backed jo
 - Hybrid retrieval that fuses dense Qdrant candidates with an SQL-backed lexical chunk index
 - Citation-rich answers with applied-filter telemetry
 - Citation-grounded answer validation with used chunk IDs and grounding warnings
+- Retrieval relevance gating that abstains when retrieved chunks are too weak to support the question
 - Offline evaluation with `precision@k`, `hit_rate@k`, and a faithfulness rubric
 - Structured logging, durable worker jobs, tests, Docker, and a strong portfolio UI
 
@@ -113,6 +114,7 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/rag_assistant mak
 - Supports `retrieval_mode`, `alpha`, and `include_trace` for hybrid dense/lexical retrieval diagnostics
 - Hybrid mode independently retrieves lexical candidates, so exact-match terms can rescue chunks missed by dense search
 - Validates that generated answers cite retrieved context; uncited answers are repaired with a citation-grounded fallback
+- Applies configurable relevance thresholds before answer generation. If retrieved chunks are too weak, the API returns insufficient evidence instead of forcing a cited answer.
 
 ### Evaluation
 
@@ -121,7 +123,7 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/rag_assistant mak
 - Runs against checked-in datasets under `evals/datasets`
 - Computes retrieval metrics and a faithfulness rubric
 - Stores per-example rationale and aggregate summaries
-- Reports `precision@k`, `hit_rate@k`, `recall@k`, `mrr`, faithfulness, and per-filter summaries
+- Reports `precision@k`, `hit_rate@k`, `recall@k`, `mrr`, faithfulness, abstention accuracy, unsupported-answer rate, citation relevance, and per-filter summaries
 
 ### Jobs
 

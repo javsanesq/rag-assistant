@@ -160,6 +160,10 @@ function renderEvals() {
             <div class="metric-cell"><span>MRR</span><strong>${metric(summary.mrr)}</strong></div>
             <div class="metric-cell"><span>faithfulness</span><strong>${metric(summary.faithfulness_score)}</strong></div>
             <div class="metric-cell"><span>examples</span><strong>${metric(summary.examples)}</strong></div>
+            <div class="metric-cell"><span>abstention</span><strong>${metric(summary.abstention_accuracy)}</strong></div>
+            <div class="metric-cell"><span>unsupported</span><strong>${metric(summary.unsupported_answer_rate)}</strong></div>
+            <div class="metric-cell"><span>citation rel.</span><strong>${metric(summary.citation_relevance_rate)}</strong></div>
+            <div class="metric-cell"><span>no-answer</span><strong>${metric(summary.no_answer_examples)}</strong></div>
           </div>
           ${filterRows ? `<div class="kv-grid"><div class="kv-label">by filter</div>${filterRows}</div>` : ""}
         </article>

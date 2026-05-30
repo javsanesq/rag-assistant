@@ -29,7 +29,7 @@ def build_runtime() -> SimpleNamespace:
     job_service = JobService(session_factory, lease_seconds=settings.job_lease_seconds)
     document_service = DocumentService(session_factory, vector_store, embedding_provider, job_service, settings)
     retrieval_service = RetrievalService(vector_store, embedding_provider, settings.top_k, lexical_store)
-    query_service = QueryService(retrieval_service, llm_provider)
+    query_service = QueryService(retrieval_service, llm_provider, settings)
     evaluation_service = EvaluationService(settings, query_service, job_service, llm_provider)
     return SimpleNamespace(
         settings=settings,

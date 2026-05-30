@@ -1,5 +1,6 @@
 from rag_assistant_api.adapters.vector_store import RetrievedChunk
-from rag_assistant_api.services.query import _validate_or_repair_answer
+from rag_assistant_api.core.config import Settings
+from rag_assistant_api.services.query import _filter_relevant_chunks, _validate_or_repair_answer
 
 
 def test_grounded_answer_accepts_valid_citation_marker():
@@ -30,7 +31,33 @@ def test_no_retrieved_citations_returns_insufficient_evidence():
     assert grounding["warnings"] == ["No citations were retrieved for this query."]
 
 
-def _chunk(chunk_id: str) -> RetrievedChunk:
+def test_relevance_gate_rejects_dense_only_noise():
+    settings = Settings()
+
+    relevant, rejected = _filter_relevant_chunks(
+        [_chunk("dense-noise", dense_score=0.4, lexical_score=0.0, final_score=0.4)],
+        settings,
+        "What is the Zurich office phone number?",
+    )
+
+    assert relevant == []
+    assert rejected[0].chunk_id == "dense-noise"
+
+
+def test_relevance_gate_accepts_lexical_match():
+    settings = Settings()
+
+    relevant, rejected = _filter_relevant_chunks(
+        [_chunk("lexical-hit", dense_score=0.0, lexical_score=0.3, final_score=0.075)],
+        settings,
+        "What is the refund calendar window?",
+    )
+
+    assert relevant[0].chunk_id == "lexical-hit"
+    assert rejected == []
+
+
+def _chunk(chunk_id: str, dense_score: float = 1.0, lexical_score: float = 1.0, final_score: float = 1.0) -> RetrievedChunk:
     return RetrievedChunk(
         chunk_id=chunk_id,
         document_id="company-handbook",
@@ -39,9 +66,9 @@ def _chunk(chunk_id: str) -> RetrievedChunk:
         category="policy",
         document_date=None,
         excerpt="Refunds are available within 30 calendar days of purchase.",
-        score=1.0,
-        dense_score=1.0,
-        lexical_score=1.0,
-        final_score=1.0,
+        score=final_score,
+        dense_score=dense_score,
+        lexical_score=lexical_score,
+        final_score=final_score,
         chunk_index=0,
     )
