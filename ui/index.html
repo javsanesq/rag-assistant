@@ -14,114 +14,102 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="masthead">
-        <div>
-          <p class="eyebrow">Production-grade retrieval stack</p>
-          <h1>RAG Assistant</h1>
-        </div>
-        <div class="status-strip">
-          <span id="api-status">API checking...</span>
-          <span>Qdrant-backed</span>
-          <span>Offline eval ready</span>
-        </div>
-      </header>
-
-      <main class="workspace">
-        <aside class="rail">
-          <section class="rail-section">
-            <p class="section-kicker">Ingest</p>
-            <h2>Knowledge Sources</h2>
-            <form id="file-form" class="stack-form">
-              <label class="field">
-                <span>Upload files</span>
-                <input id="file-input" name="files" type="file" multiple />
-              </label>
-              <label class="field">
-                <span>Metadata JSON</span>
-                <textarea id="metadata-json" rows="4" placeholder='{"category":"policy","document_date":"2026-01-15"}'></textarea>
-              </label>
-              <button type="submit">Queue file ingestion</button>
-            </form>
-
-            <form id="url-form" class="stack-form">
-              <label class="field">
-                <span>Single URL or sitemap</span>
-                <input id="url-input" type="url" placeholder="https://example.com/docs" />
-              </label>
-              <label class="field">
-                <span>Mode</span>
-                <select id="url-mode">
-                  <option value="url">Single page</option>
-                  <option value="sitemap">Sitemap</option>
-                </select>
-              </label>
-              <button type="submit">Queue URL ingestion</button>
-            </form>
-          </section>
-
-          <section class="rail-section">
-            <p class="section-kicker">Corpus</p>
-            <h2>Document Inventory</h2>
-            <div id="document-list" class="doc-list"></div>
-          </section>
-        </aside>
-
-        <section class="chat-stage">
-          <div class="hero-copy">
-            <p class="section-kicker">Query workspace</p>
-            <h2>Ask grounded questions, keep the evidence visible, and tune retrieval live.</h2>
-            <p>
-              This surface is designed to show the production concerns that matter: document filters,
-              applied retrieval scope, inspectable citations, and measurable answer quality.
-            </p>
+      <aside class="rail">
+        <div class="rail-header">
+          <p class="eyebrow">RAG Assistant</p>
+          <div class="status-strip">
+            <span id="api-status">checking…</span>
           </div>
+        </div>
 
-          <form id="query-form" class="query-bar">
-            <div class="field grow">
-              <span>Question</span>
-              <textarea id="question-input" rows="3" placeholder="What is the refund window for annual plans?"></textarea>
-            </div>
-            <div class="query-controls">
-              <label class="field">
-                <span>Category</span>
-                <select id="category-filter">
-                  <option value="">All categories</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Document IDs</span>
-                <input id="document-filter" placeholder="company-handbook,release-notes" />
-              </label>
-              <button type="submit">Run grounded query</button>
-            </div>
+        <section class="rail-section">
+          <p class="section-kicker">Ingest</p>
+          <form id="file-form" class="stack-form">
+            <label class="field">
+              <span>Upload files</span>
+              <input id="file-input" name="files" type="file" multiple />
+            </label>
+            <label class="field">
+              <span>Metadata JSON</span>
+              <textarea id="metadata-json" rows="3" placeholder='{"category":"policy"}'></textarea>
+            </label>
+            <button type="submit">Queue files</button>
           </form>
 
-          <div id="chat-log" class="chat-log"></div>
+          <div class="divider"></div>
+
+          <form id="url-form" class="stack-form">
+            <label class="field">
+              <span>URL or sitemap</span>
+              <input id="url-input" type="url" placeholder="https://example.com/docs" />
+            </label>
+            <label class="field">
+              <span>Mode</span>
+              <select id="url-mode">
+                <option value="url">Single page</option>
+                <option value="sitemap">Sitemap</option>
+              </select>
+            </label>
+            <button type="submit">Queue URL</button>
+          </form>
         </section>
 
-        <aside class="inspector">
-          <section class="rail-section">
-            <p class="section-kicker">Operations</p>
-            <h2>Jobs</h2>
-            <div id="job-list" class="timeline"></div>
-          </section>
+        <section class="rail-section grow">
+          <p class="section-kicker">Corpus</p>
+          <div id="document-list" class="doc-list"></div>
+        </section>
+      </aside>
 
-          <section class="rail-section">
-            <p class="section-kicker">Evaluation</p>
-            <h2>Offline Quality</h2>
-            <form id="eval-form" class="stack-form">
-              <label class="field">
-                <span>Dataset name</span>
-                <input id="dataset-name" value="portfolio_eval.jsonl" />
-              </label>
-              <button type="submit">Run evaluation</button>
-            </form>
-            <div id="eval-list" class="timeline"></div>
-          </section>
-        </aside>
+      <main class="chat-stage">
+        <div id="chat-log" class="chat-log">
+          <div class="empty-state" id="empty-hint">
+            <p class="empty-title">Ask a grounded question</p>
+            <p class="empty-sub">Answers will include source citations and retrieval scores.</p>
+          </div>
+        </div>
+
+        <form id="query-form" class="query-bar">
+          <div class="query-filters">
+            <label class="field inline">
+              <span>Category</span>
+              <select id="category-filter">
+                <option value="">All</option>
+              </select>
+            </label>
+            <label class="field inline">
+              <span>Doc IDs</span>
+              <input id="document-filter" placeholder="id1,id2" />
+            </label>
+          </div>
+          <div class="query-input-row">
+            <textarea id="question-input" rows="1" placeholder="What is the refund window for annual plans?"></textarea>
+            <button type="submit" class="send-btn" aria-label="Send">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </form>
       </main>
+
+      <aside class="inspector">
+        <section class="rail-section">
+          <p class="section-kicker">Jobs</p>
+          <div id="job-list" class="timeline"></div>
+        </section>
+
+        <section class="rail-section">
+          <p class="section-kicker">Evaluation</p>
+          <form id="eval-form" class="stack-form">
+            <label class="field">
+              <span>Dataset</span>
+              <input id="dataset-name" value="portfolio_eval.jsonl" />
+            </label>
+            <button type="submit">Run eval</button>
+          </form>
+          <div id="eval-list" class="timeline"></div>
+        </section>
+      </aside>
     </div>
 
-    <script src="./app.js?v=20260530" defer></script>
+    <script src="./app.js?v=20260530c" defer></script>
   </body>
 </html>

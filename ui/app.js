@@ -15,10 +15,6 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function safeJson(value) {
-  return escapeHtml(JSON.stringify(value ?? {}, null, 2));
-}
-
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -30,8 +26,10 @@ async function fetchJson(url, options) {
 
 function renderStatus(message, ok = true) {
   const node = document.getElementById("api-status");
-  node.textContent = message;
+  const plain = String(message).replace(/<[^>]*>/g, "").trim();
+  node.textContent = ok ? plain : (plain.length > 40 ? plain.slice(0, 40) + "…" : plain);
   node.style.color = ok ? "var(--accent)" : "var(--danger)";
+  node.title = plain;
 }
 
 function renderDocuments() {
@@ -78,28 +76,57 @@ function renderDocuments() {
   });
 }
 
+function statusClass(status) {
+  if (status === "completed") return "ok";
+  if (status === "failed") return "fail";
+  if (status === "running") return "run";
+  return "wait";
+}
+
+function formatTime(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function resultPairs(result) {
+  if (!result || typeof result !== "object") return "";
+  const rows = Object.entries(result)
+    .filter(([, value]) => value === null || ["string", "number", "boolean"].includes(typeof value))
+    .map(
+      ([key, value]) =>
+        `<div class="kv"><span>${escapeHtml(key.replaceAll("_", " "))}</span><strong>${escapeHtml(value ?? "—")}</strong></div>`
+    )
+    .join("");
+  return rows ? `<div class="kv-grid">${rows}</div>` : "";
+}
+
 function renderJobs() {
   const list = document.getElementById("job-list");
   const jobs = state.jobs.filter((item) => item.job_type === "ingestion");
   if (!jobs.length) {
-    list.innerHTML = '<p class="empty-state">No ingestion jobs yet.</p>';
+    list.innerHTML = '<p class="empty-state-sm">No ingestion jobs yet.</p>';
     return;
   }
   list.innerHTML = jobs
-    .map(
-      (job) => `
+    .map((job) => {
+      const time = formatTime(job.completed_at || job.started_at || job.created_at);
+      return `
         <article class="timeline-row">
           <div class="timeline-header">
-            <strong>${escapeHtml(job.status)}</strong>
-            <span class="pill">${escapeHtml(job.job_type)}</span>
+            <span class="status-badge ${statusClass(job.status)}">${escapeHtml(job.status)}</span>
+            ${time ? `<span class="timeline-meta">${time}</span>` : ""}
           </div>
-          <div class="metrics">progress ${job.progress ?? 0}% · attempts ${job.attempts ?? 0}/${job.max_attempts ?? 3}</div>
-          <div class="timeline-meta">${escapeHtml(job.id)}</div>
-          ${job.error_message ? `<div class="timeline-meta">${escapeHtml(job.error_code || "error")}: ${escapeHtml(job.error_message)}</div>` : ""}
-          <pre class="timeline-meta">${safeJson(job.result)}</pre>
+          ${
+            job.status === "running" || job.progress < 100
+              ? `<div class="progress-track"><div class="progress-fill" style="width:${job.progress ?? 0}%"></div></div>`
+              : ""
+          }
+          ${job.attempts > 1 ? `<div class="metrics">attempts ${job.attempts}/${job.max_attempts ?? 3}</div>` : ""}
+          ${job.error_message ? `<div class="metrics error-text">${escapeHtml(job.error_code || "error")}: ${escapeHtml(job.error_message)}</div>` : ""}
+          ${resultPairs(job.result)}
         </article>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
@@ -111,17 +138,30 @@ function renderEvals() {
   }
   list.innerHTML = state.evals
     .map((job) => {
-      const summary = job.result.summary || {};
+      const summary = (job.result && job.result.summary) || {};
+      const metric = (value) => (value === null || value === undefined ? "—" : value);
+      const byFilter = summary.by_filter || {};
+      const filterRows = Object.entries(byFilter)
+        .map(
+          ([name, stats]) =>
+            `<div class="kv"><span>${escapeHtml(name)}</span><strong>hit ${metric(stats.hit_rate)} · n=${metric(stats.examples)}</strong></div>`
+        )
+        .join("");
       return `
         <article class="timeline-row">
           <div class="timeline-header">
             <strong>${escapeHtml(job.dataset_name || "dataset")}</strong>
-            <span class="pill">${escapeHtml(job.status)}</span>
+            <span class="status-badge ${statusClass(job.status)}">${escapeHtml(job.status)}</span>
           </div>
-          <div class="metrics">
-            precision@k ${summary.precision_at_k ?? "-"} · hit rate ${summary.hit_rate ?? "-"} · faithfulness ${summary.faithfulness_score ?? "-"}
+          <div class="metric-grid">
+            <div class="metric-cell"><span>precision@k</span><strong>${metric(summary.precision_at_k)}</strong></div>
+            <div class="metric-cell"><span>hit rate</span><strong>${metric(summary.hit_rate)}</strong></div>
+            <div class="metric-cell"><span>recall@k</span><strong>${metric(summary.recall_at_k)}</strong></div>
+            <div class="metric-cell"><span>MRR</span><strong>${metric(summary.mrr)}</strong></div>
+            <div class="metric-cell"><span>faithfulness</span><strong>${metric(summary.faithfulness_score)}</strong></div>
+            <div class="metric-cell"><span>examples</span><strong>${metric(summary.examples)}</strong></div>
           </div>
-          <pre class="timeline-meta">${safeJson(summary.by_filter || {})}</pre>
+          ${filterRows ? `<div class="kv-grid"><div class="kv-label">by filter</div>${filterRows}</div>` : ""}
         </article>
       `;
     })
@@ -130,14 +170,18 @@ function renderEvals() {
 
 function appendMessage(role, body, citations = [], metrics = null) {
   const log = document.getElementById("chat-log");
+
+  const emptyHint = document.getElementById("empty-hint");
+  if (emptyHint) emptyHint.remove();
+
   const wrapper = document.createElement("article");
   wrapper.className = `message ${role}`;
   wrapper.innerHTML = `
-    <div class="section-kicker">${role === "user" ? "Prompt" : "Answer"}</div>
+    <div class="message-role">${role === "user" ? "You" : "Assistant"}</div>
     <div class="message-body">${escapeHtml(body)}</div>
     ${
       metrics
-        ? `<div class="metrics">latency ${metrics.latency_ms}ms · retrieved ${metrics.retrieved_count}</div>`
+        ? `<div class="message-metrics">latency ${metrics.latency_ms}ms · retrieved ${metrics.retrieved_count}</div>`
         : ""
     }
     ${
@@ -156,7 +200,8 @@ function appendMessage(role, body, citations = [], metrics = null) {
         : ""
     }
   `;
-  log.prepend(wrapper);
+  log.appendChild(wrapper);
+  wrapper.scrollIntoView({ behavior: "smooth", block: "end" });
 }
 
 async function refreshAll() {
