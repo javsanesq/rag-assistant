@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: install test api ui docker-up docker-config smoke docker-down lint
+.PHONY: install test api ui db-upgrade db-revision docker-up docker-config smoke docker-down lint
 
 install:
 	cd api && $(PYTHON) -m pip install -e .[dev]
@@ -13,6 +13,12 @@ api:
 
 ui:
 	cd ui && $(PYTHON) -m http.server 3000
+
+db-upgrade:
+	cd api && PYTHONPATH=src alembic upgrade head
+
+db-revision:
+	cd api && PYTHONPATH=src alembic revision --autogenerate -m "$(m)"
 
 docker-up:
 	cp -n .env.example .env || true

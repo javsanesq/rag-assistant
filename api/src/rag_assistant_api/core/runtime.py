@@ -21,7 +21,7 @@ def build_runtime() -> SimpleNamespace:
     configure_logging(settings.log_level)
     engine = build_engine(settings.effective_database_url)
     session_factory = build_session_factory(engine)
-    init_db(engine)
+    init_db(engine, settings.effective_database_url)
     embedding_provider = build_embedding_provider(settings)
     llm_provider = build_llm_provider(settings)
     vector_store = QdrantVectorStore(settings, embedding_provider.dimensions)

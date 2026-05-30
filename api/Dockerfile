@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY api/pyproject.toml /workspace/api/pyproject.toml
+COPY api/alembic.ini /workspace/api/alembic.ini
+COPY api/alembic /workspace/api/alembic
 COPY api/src /workspace/api/src
 RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -e /workspace/api
 

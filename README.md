@@ -16,7 +16,7 @@ Production-grade RAG assistant built with FastAPI, Qdrant, durable SQL-backed jo
 ## Stack
 
 - API: FastAPI + SQLAlchemy + Qdrant client
-- Storage: Qdrant for vectors, SQLite by default for metadata/jobs, Postgres via `DATABASE_URL`
+- Storage: Qdrant for vectors, SQLite by default for metadata/jobs, Postgres via `DATABASE_URL`, and Alembic for versioned schema migrations
 - Parsing: `pypdf`, `python-docx`, `beautifulsoup4`, `PyYAML`
 - Embeddings: mock for smoke tests, OpenAI for production, optional sentence-transformers for local models
 - LLM: mock, OpenAI, or Ollama
@@ -37,6 +37,7 @@ Open:
 - Qdrant: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 
 `docker compose` starts four services: API, worker, Qdrant, and UI. The API enqueues ingestion/evaluation jobs; the worker claims and executes them.
+The API and worker apply Alembic migrations at startup, so a fresh `DATABASE_URL` is initialized automatically.
 
 ## Local development
 
@@ -62,6 +63,23 @@ Run the worker locally in a second terminal:
 cd /Users/javiersanchezesquivel/Desktop/Proyectos/rag-assistant
 source .venv/bin/activate
 cd api && PYTHONPATH=src python -m rag_assistant_api.worker
+```
+
+## Database migrations
+
+The SQL schema is managed with Alembic. Runtime startup automatically upgrades the configured database to the latest migration, which keeps local Docker, VPS, and Postgres-backed deployments consistent.
+
+Manual migration commands:
+
+```bash
+make db-upgrade
+make db-revision m="describe change"
+```
+
+SQLite is the default local database. Postgres works through `DATABASE_URL`, for example:
+
+```bash
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/rag_assistant make db-upgrade
 ```
 
 ## Core flows
