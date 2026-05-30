@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from rag_assistant_api.adapters.embeddings import build_embedding_provider
+from rag_assistant_api.adapters.lexical_store import SQLLexicalStore
 from rag_assistant_api.adapters.llm import build_llm_provider
 from rag_assistant_api.adapters.vector_store import QdrantVectorStore
 from rag_assistant_api.core.config import Settings
@@ -24,9 +25,10 @@ def build_runtime() -> SimpleNamespace:
     embedding_provider = build_embedding_provider(settings)
     llm_provider = build_llm_provider(settings)
     vector_store = QdrantVectorStore(settings, embedding_provider.dimensions)
+    lexical_store = SQLLexicalStore(session_factory)
     job_service = JobService(session_factory, lease_seconds=settings.job_lease_seconds)
     document_service = DocumentService(session_factory, vector_store, embedding_provider, job_service, settings)
-    retrieval_service = RetrievalService(vector_store, embedding_provider, settings.top_k)
+    retrieval_service = RetrievalService(vector_store, embedding_provider, settings.top_k, lexical_store)
     query_service = QueryService(retrieval_service, llm_provider)
     evaluation_service = EvaluationService(settings, query_service, job_service, llm_provider)
     return SimpleNamespace(
@@ -36,6 +38,7 @@ def build_runtime() -> SimpleNamespace:
         embedding_provider=embedding_provider,
         llm_provider=llm_provider,
         vector_store=vector_store,
+        lexical_store=lexical_store,
         job_service=job_service,
         document_service=document_service,
         retrieval_service=retrieval_service,

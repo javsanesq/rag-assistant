@@ -55,3 +55,20 @@ class JobRecord(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     leased_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ChunkRecord(Base):
+    __tablename__ = "chunks"
+
+    chunk_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(128), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    source_uri: Mapped[str] = mapped_column(String(1024))
+    source_type: Mapped[str] = mapped_column(String(32))
+    category: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    document_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    document_timestamp: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    chunk_text: Mapped[str] = mapped_column(Text)
+    lexical_terms_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

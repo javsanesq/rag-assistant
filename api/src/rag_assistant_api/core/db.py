@@ -25,7 +25,7 @@ def build_session_factory(engine) -> sessionmaker[Session]:
 
 
 def init_db(engine) -> None:
-    from rag_assistant_api.domain.models import DocumentRecord, JobRecord  # noqa: F401
+    from rag_assistant_api.domain.models import ChunkRecord, DocumentRecord, JobRecord  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _ensure_job_columns(engine)

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sqlalchemy import select
+
+from rag_assistant_api.domain.models import ChunkRecord
 from rag_assistant_api.worker import run_once
 
 
@@ -29,6 +32,8 @@ def test_file_ingest_query_and_eval_flow(client):
     assert docs_response.status_code == 200
     payload = docs_response.json()
     assert payload["facets"]["document_count"] == 2
+    with client.app.state.session_factory() as session:
+        assert session.scalar(select(ChunkRecord).where(ChunkRecord.document_id == "company-handbook").limit(1)) is not None
 
     query_response = client.post(
         "/api/v1/query",
@@ -49,6 +54,11 @@ def test_file_ingest_query_and_eval_flow(client):
     assert run_detail.status_code == 200
     assert run_detail.json()["status"] == "completed"
     assert "mrr" in run_detail.json()["result"]["summary"]
+
+    delete_response = client.delete("/api/v1/documents/company-handbook")
+    assert delete_response.status_code == 200
+    with client.app.state.session_factory() as session:
+        assert session.scalar(select(ChunkRecord).where(ChunkRecord.document_id == "company-handbook").limit(1)) is None
 
 
 def test_invalid_upload_is_rejected(client):

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from qdrant_client.http.models import PointStruct
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from rag_assistant_api.adapters.embeddings import EmbeddingProvider
@@ -17,7 +17,7 @@ from rag_assistant_api.adapters.parsers import ParsedContent, parse_file_bytes
 from rag_assistant_api.adapters.url_loader import expand_urls, fetch_url_content
 from rag_assistant_api.adapters.vector_store import QdrantVectorStore
 from rag_assistant_api.core.config import Settings
-from rag_assistant_api.domain.models import DocumentRecord
+from rag_assistant_api.domain.models import ChunkRecord, DocumentRecord
 from rag_assistant_api.domain.schemas import ChunkingConfig, DocumentResponse, DocumentsListResponse
 from rag_assistant_api.services.chunking import chunk_text, validate_chunking
 from rag_assistant_api.services.jobs import JobService
@@ -140,6 +140,7 @@ class DocumentService:
             record = session.get(DocumentRecord, document_id)
             if not record:
                 return False
+            session.execute(delete(ChunkRecord).where(ChunkRecord.document_id == document_id))
             session.delete(record)
             session.commit()
         self.vector_store.delete_document(document_id)
@@ -187,7 +188,9 @@ class DocumentService:
         chunks = chunk_text(parsed.text, effective_chunking)
         embeddings = self.embedding_provider.embed_texts([chunk.text for chunk in chunks]) if chunks else []
         points = []
+        chunk_records = []
         for chunk, vector in zip(chunks, embeddings):
+            lexical_terms = _tokenize(chunk.text)
             points.append(
                 PointStruct(
                     id=chunk.chunk_id,
@@ -202,14 +205,31 @@ class DocumentService:
                         "document_timestamp": to_timestamp(document_date),
                         "chunk_index": chunk.chunk_index,
                         "chunk_text": chunk.text,
-                        "lexical_terms": _tokenize(chunk.text),
+                        "lexical_terms": lexical_terms,
                         "metadata": serialized_metadata,
                     },
+                )
+            )
+            chunk_records.append(
+                ChunkRecord(
+                    chunk_id=chunk.chunk_id,
+                    document_id=document_id,
+                    title=parsed.title,
+                    source_uri=parsed.source_uri,
+                    source_type=parsed.source_type,
+                    category=category,
+                    document_date=document_date,
+                    document_timestamp=to_timestamp(document_date),
+                    chunk_index=chunk.chunk_index,
+                    chunk_text=chunk.text,
+                    lexical_terms_json=json.dumps(lexical_terms),
                 )
             )
         self.vector_store.upsert_chunks(points)
 
         with self.session_factory() as session:
+            session.execute(delete(ChunkRecord).where(ChunkRecord.document_id == document_id))
+            session.add_all(chunk_records)
             record = session.get(DocumentRecord, document_id)
             if record:
                 record.status = "ready"
