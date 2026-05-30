@@ -20,3 +20,8 @@ jobs:
         env:
           PYTHONPATH: api/src
         run: pytest
+      - name: Validate frontend and deployment config
+        run: |
+          node --check ui/app.js
+          bash -n scripts/smoke_docker.sh
+          docker compose config >/tmp/rag-compose.yml

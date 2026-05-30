@@ -143,6 +143,18 @@ curl -f http://localhost:8000/health/ready
 node --check ui/app.js
 ```
 
+Run the full Docker RAG workflow smoke after the stack is running:
+
+```bash
+make smoke-e2e
+```
+
+The E2E smoke uploads the checked-in sample knowledge base, waits for the worker to ingest it, verifies document inventory, runs a grounded filtered query with citations, starts an offline evaluation run, waits for completion, and checks the nginx UI endpoint. To let the script start the stack itself:
+
+```bash
+START_STACK=1 make smoke-e2e
+```
+
 ## Repository layout
 
 ```text

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import fcntl
 from pathlib import Path
 
 from alembic import command
@@ -64,10 +66,14 @@ EXPECTED_COLUMNS = {
 
 def run_migrations(engine: Engine, database_url: str) -> None:
     alembic_config = _build_alembic_config(database_url)
-    _stamp_existing_current_schema(engine, alembic_config)
-    with engine.begin() as connection:
-        alembic_config.attributes["connection"] = connection
-        command.upgrade(alembic_config, "head")
+    with _migration_lock(database_url):
+        _stamp_existing_current_schema(engine, alembic_config)
+        with engine.begin() as connection:
+            alembic_config.attributes["connection"] = connection
+            try:
+                command.upgrade(alembic_config, "head")
+            finally:
+                alembic_config.attributes.pop("connection", None)
 
 
 def _build_alembic_config(database_url: str) -> Config:
@@ -107,3 +113,31 @@ def _missing_expected_columns(inspector) -> dict[str, set[str]]:
         if table_missing:
             missing[table] = table_missing
     return missing
+
+
+@contextlib.contextmanager
+def _migration_lock(database_url: str):
+    lock_path = _sqlite_lock_path(database_url)
+    if lock_path is None:
+        yield
+        return
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _sqlite_lock_path(database_url: str) -> Path | None:
+    if not database_url.startswith("sqlite"):
+        return None
+    sqlite_path_value = database_url.replace("sqlite:///", "", 1)
+    if not sqlite_path_value or sqlite_path_value == ":memory:":
+        return None
+    sqlite_path = Path(sqlite_path_value)
+    if not sqlite_path.is_absolute():
+        sqlite_path = Path.cwd() / sqlite_path
+    return sqlite_path.with_suffix(sqlite_path.suffix + ".migrate.lock")

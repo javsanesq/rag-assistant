@@ -26,6 +26,11 @@ services:
     depends_on:
       qdrant:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health/ready >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   worker:
     build:
@@ -53,6 +58,8 @@ services:
       - ./samples:/workspace/samples:ro
     depends_on:
       qdrant:
+        condition: service_healthy
+      api:
         condition: service_healthy
 
   qdrant:

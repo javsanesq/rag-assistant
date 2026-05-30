@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: install test api ui db-upgrade db-revision docker-up docker-config smoke docker-down lint
+.PHONY: install test api ui db-upgrade db-revision docker-up docker-config smoke smoke-e2e docker-down lint
 
 install:
 	cd api && $(PYTHON) -m pip install -e .[dev]
@@ -30,6 +30,9 @@ docker-config:
 smoke:
 	curl -f http://localhost:8000/health/live
 	curl -f http://localhost:8000/health/ready
+
+smoke-e2e:
+	scripts/smoke_docker.sh
 
 docker-down:
 	docker compose down

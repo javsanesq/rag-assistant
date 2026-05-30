@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlalchemy import inspect, text
 
 from rag_assistant_api.core.db import Base, build_engine, init_db
+from rag_assistant_api.core.migrations import _sqlite_lock_path
 from rag_assistant_api.domain import models  # noqa: F401
 
 
@@ -24,6 +25,16 @@ def test_init_db_runs_alembic_migrations_for_fresh_sqlite(tmp_path: Path):
 
     assert version == "20260530_0001"
     engine.dispose()
+
+
+def test_sqlite_migration_lock_path_uses_database_file(tmp_path: Path):
+    db_path = tmp_path / "app.db"
+
+    lock_path = _sqlite_lock_path(f"sqlite:///{db_path}")
+
+    assert lock_path == tmp_path / "app.db.migrate.lock"
+    assert _sqlite_lock_path("sqlite:///:memory:") is None
+    assert _sqlite_lock_path("postgresql+psycopg://user:pass@localhost/db") is None
 
 
 def test_init_db_stamps_existing_unversioned_current_schema(tmp_path: Path):

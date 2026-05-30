@@ -9,6 +9,7 @@ __pycache__/
 *.pyd
 *.sqlite3
 *.db
+*.migrate.lock
 *.log
 .DS_Store
 .coverage
