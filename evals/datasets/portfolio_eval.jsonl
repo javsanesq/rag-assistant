@@ -1,0 +1,3 @@
+{"id":"refund-policy","question":"What is the refund window for annual plans?","expected_document_ids":["company-handbook"],"category":"policy","notes":"Should ground answer in the handbook refund paragraph."}
+{"id":"incident-response","question":"How quickly must security incidents be recorded?","expected_document_ids":["company-handbook"],"category":"policy","notes":"Should mention one-hour logging requirement."}
+{"id":"retrieval-stack","question":"Which vector database backs the search stack?","expected_document_ids":["release-notes"],"category":"engineering","notes":"Should mention Qdrant."}
