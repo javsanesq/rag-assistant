@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     url_allowed_domains: list[str] = Field(default_factory=list)
     url_blocked_domains: list[str] = Field(default_factory=list)
 
-    embed_provider: str = "sentence-transformers"
+    embed_provider: str = "mock"
     embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     llm_provider: str = "mock"

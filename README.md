@@ -16,7 +16,7 @@ Production-grade RAG assistant built with FastAPI, Qdrant, durable SQL-backed jo
 - API: FastAPI + SQLAlchemy + Qdrant client
 - Storage: Qdrant for vectors, SQLite by default for metadata/jobs, Postgres via `DATABASE_URL`
 - Parsing: `pypdf`, `python-docx`, `beautifulsoup4`, `PyYAML`
-- Embeddings: sentence-transformers or OpenAI
+- Embeddings: mock for smoke tests, OpenAI for production, optional sentence-transformers for local models
 - LLM: mock, OpenAI, or Ollama
 - UI: static HTML/CSS/JS behind nginx
 
@@ -45,6 +45,13 @@ source .venv/bin/activate
 make install
 make test
 make api
+```
+
+Install local sentence-transformers support only when you need offline embedding models:
+
+```bash
+cd api
+pip install -e '.[local-embeddings]'
 ```
 
 Run the worker locally in a second terminal:

@@ -161,7 +161,7 @@ function appendMessage(role, body, citations = [], metrics = null) {
 
 async function refreshAll() {
   const [health, docs, jobs, evals] = await Promise.all([
-    fetchJson(`${apiBase.replace(/\/$/, "")}/health/ready`),
+    fetchJson("/health/ready"),
     fetchJson(`${apiBase}/v1/documents`),
     fetchJson(`${apiBase}/v1/jobs`),
     fetchJson(`${apiBase}/v1/evals/runs`),
