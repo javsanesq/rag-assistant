@@ -27,11 +27,30 @@ class QueryService:
                 document_date=item.document_date,
                 excerpt=item.excerpt[:360],
                 score=item.score,
+                dense_score=item.dense_score,
+                lexical_score=item.lexical_score,
+                final_score=item.final_score,
                 chunk_id=item.chunk_id,
                 chunk_index=item.chunk_index,
             )
             for item in retrieved
         ]
+        trace = None
+        if request.include_trace:
+            trace = {
+                "retrieval_mode": request.retrieval_mode,
+                "alpha": request.alpha,
+                "selected_chunks": [
+                    {
+                        "chunk_id": item.chunk_id,
+                        "document_id": item.document_id,
+                        "dense_score": item.dense_score,
+                        "lexical_score": item.lexical_score,
+                        "final_score": item.final_score,
+                    }
+                    for item in retrieved
+                ],
+            }
         return QueryResponse(
             answer=answer,
             citations=citations,
@@ -43,4 +62,5 @@ class QueryService:
                 "top_k": request.top_k or self.retrieval_service.default_top_k,
             },
             metrics={"latency_ms": elapsed_ms, "retrieved_count": len(citations)},
+            trace=trace,
         )

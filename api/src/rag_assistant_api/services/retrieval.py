@@ -23,4 +23,7 @@ class RetrievalService:
             category=request.category,
             date_from_timestamp=to_timestamp(request.date_from),
             date_to_timestamp=to_timestamp(request.date_to),
+            query_text=request.question,
+            retrieval_mode=request.retrieval_mode,
+            alpha=request.alpha,
         )

@@ -1,21 +1,33 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from rag_assistant_api.domain.models import JobRecord
 from rag_assistant_api.domain.schemas import JobResponse
 
+logger = logging.getLogger(__name__)
+
 
 class JobService:
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(self, session_factory: sessionmaker[Session], lease_seconds: int = 300) -> None:
         self.session_factory = session_factory
+        self.lease_seconds = lease_seconds
 
-    def create_job(self, job_type: str, payload: dict, document_id: str | None = None, dataset_name: str | None = None) -> JobRecord:
+    def create_job(
+        self,
+        job_type: str,
+        payload: dict,
+        document_id: str | None = None,
+        dataset_name: str | None = None,
+        result: dict | None = None,
+        max_attempts: int = 3,
+    ) -> JobRecord:
         with self.session_factory() as session:
             job = JobRecord(
                 id=str(uuid4()),
@@ -23,8 +35,9 @@ class JobService:
                 status="queued",
                 document_id=document_id,
                 dataset_name=dataset_name,
-                payload_json=json.dumps(payload),
-                result_json="{}",
+                payload_json=json.dumps(payload, default=str),
+                result_json=json.dumps(result or {}, default=str),
+                max_attempts=max_attempts,
             )
             session.add(job)
             session.commit()
@@ -32,13 +45,80 @@ class JobService:
             return job
 
     def mark_running(self, job_id: str) -> None:
-        self._update(job_id, status="running", started_at=datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        self._update(job_id, status="running", started_at=now)
 
     def mark_completed(self, job_id: str, result: dict) -> None:
-        self._update(job_id, status="completed", completed_at=datetime.now(timezone.utc), result_json=json.dumps(result))
+        self._update(
+            job_id,
+            status="completed",
+            completed_at=datetime.now(timezone.utc),
+            progress=100,
+            leased_until=None,
+            result_json=json.dumps(result, default=str),
+        )
 
-    def mark_failed(self, job_id: str, error_message: str) -> None:
-        self._update(job_id, status="failed", completed_at=datetime.now(timezone.utc), error_message=error_message)
+    def mark_failed(self, job_id: str, error_message: str, error_code: str = "JOB_FAILED") -> None:
+        self._update(
+            job_id,
+            status="failed",
+            completed_at=datetime.now(timezone.utc),
+            leased_until=None,
+            error_code=error_code,
+            error_message=error_message,
+        )
+
+    def update_progress(self, job_id: str, progress: int, result: dict | None = None) -> None:
+        changes = {"progress": max(0, min(100, progress))}
+        if result is not None:
+            changes["result_json"] = json.dumps(result, default=str)
+        self._update(job_id, **changes)
+
+    def claim_next(self, job_types: list[str] | None = None) -> JobRecord | None:
+        now = datetime.now(timezone.utc)
+        with self.session_factory() as session:
+            stmt = (
+                select(JobRecord)
+                .where(JobRecord.status.in_(["queued", "running"]))
+                .where(JobRecord.attempts < JobRecord.max_attempts)
+                .where(or_(JobRecord.leased_until.is_(None), JobRecord.leased_until < now))
+                .order_by(JobRecord.created_at.asc())
+            )
+            if job_types:
+                stmt = stmt.where(JobRecord.job_type.in_(job_types))
+            job = session.scalars(stmt).first()
+            if not job:
+                return None
+            if job.status == "queued" and job.started_at is None:
+                job.started_at = now
+            job.status = "running"
+            job.attempts += 1
+            job.leased_until = datetime.fromtimestamp(now.timestamp() + self.lease_seconds, tz=timezone.utc)
+            job.error_code = None
+            job.error_message = None
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+            logger.info("Job claimed", extra={"job_id": job.id, "event": "job_claimed"})
+            return job
+
+    def retry_job(self, job_id: str) -> JobResponse | None:
+        with self.session_factory() as session:
+            job = session.get(JobRecord, job_id)
+            if not job:
+                return None
+            if job.status != "failed":
+                return self._serialize(job)
+            job.status = "queued"
+            job.progress = 0
+            job.error_code = None
+            job.error_message = None
+            job.completed_at = None
+            job.leased_until = None
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+            return self._serialize(job)
 
     def list_jobs(self, job_type: str | None = None) -> list[JobResponse]:
         with self.session_factory() as session:
@@ -73,6 +153,11 @@ class JobService:
             updated_at=job.updated_at,
             started_at=job.started_at,
             completed_at=job.completed_at,
+            leased_until=job.leased_until,
+            progress=job.progress,
+            attempts=job.attempts,
+            max_attempts=job.max_attempts,
+            error_code=job.error_code,
             error_message=job.error_message,
             payload=json.loads(job.payload_json or "{}"),
             result=json.loads(job.result_json or "{}"),

@@ -18,3 +18,11 @@ def get_job(job_id: str, request: Request) -> JobResponse:
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
     return job
+
+
+@router.post("/{job_id}/retry", response_model=JobResponse)
+def retry_job(job_id: str, request: Request) -> JobResponse:
+    job = request.app.state.job_service.retry_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job

@@ -273,6 +273,12 @@ button:hover {
   color: var(--muted);
 }
 
+pre.timeline-meta {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
 .pill {
   color: var(--accent);
 }

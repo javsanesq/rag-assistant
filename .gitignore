@@ -16,5 +16,6 @@ htmlcov/
 dist/
 build/
 api/.venv/
+.venv/
 api/src/*.egg-info/
 data/

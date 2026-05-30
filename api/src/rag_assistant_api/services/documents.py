@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
-from datetime import date
+import hashlib
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from qdrant_client.http.models import PointStruct
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from rag_assistant_api.adapters.embeddings import EmbeddingProvider
@@ -28,7 +29,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FilePayload:
     filename: str
-    content: bytes
+    path: str
+    content_type: str | None = None
+    size_bytes: int = 0
 
 
 class DocumentService:
@@ -46,14 +49,24 @@ class DocumentService:
         self.job_service = job_service
         self.settings = settings
 
-    def queue_file_ingest(self, files: list[FilePayload], metadata: dict[str, Any], chunking: ChunkingConfig) -> str:
+    def queue_file_ingest(
+        self,
+        files: list[FilePayload],
+        metadata: dict[str, Any],
+        chunking: ChunkingConfig,
+        rejected_files: list[dict[str, Any]] | None = None,
+    ) -> str:
         job = self.job_service.create_job(
             "ingestion",
             {
                 "source": "files",
-                "filenames": [item.filename for item in files],
+                "files": [file.__dict__ for file in files],
                 "metadata": metadata,
                 "chunking": chunking.model_dump(),
+            },
+            result={
+                "accepted_files": [{"filename": item.filename, "size_bytes": item.size_bytes} for item in files],
+                "rejected_files": rejected_files or [],
             },
         )
         return job.id
@@ -66,25 +79,45 @@ class DocumentService:
         self.job_service.mark_running(job_id)
         try:
             created_documents = []
-            for file in files:
-                parsed = parse_file_bytes(file.filename, file.content)
-                created_documents.append(self._ingest_parsed_content(parsed, metadata, chunking, job_id))
-            self.job_service.mark_completed(job_id, {"documents": created_documents, "total": len(created_documents)})
+            failed_documents = []
+            total = max(1, len(files))
+            for index, file in enumerate(files, start=1):
+                try:
+                    content = Path(file.path).read_bytes()
+                    parsed = parse_file_bytes(file.filename, content)
+                    if not parsed.text.strip():
+                        raise ValueError("No extractable text found.")
+                    created_documents.append(self._ingest_parsed_content(parsed, metadata, chunking, job_id, content))
+                except Exception as exc:
+                    failed_documents.append({"filename": file.filename, "error": str(exc)})
+                self.job_service.update_progress(job_id, int((index / total) * 90))
+            self.job_service.mark_completed(
+                job_id,
+                {
+                    "documents": created_documents,
+                    "failed_documents": failed_documents,
+                    "total": len(created_documents),
+                    "failed_total": len(failed_documents),
+                },
+            )
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("File ingestion failed", extra={"job_id": job_id})
-            self.job_service.mark_failed(job_id, str(exc))
+            self.job_service.mark_failed(job_id, str(exc), error_code="INGESTION_FAILED")
 
     def process_url_batch(self, job_id: str, sources: list[str], metadata: dict[str, Any], chunking: ChunkingConfig) -> None:
         self.job_service.mark_running(job_id)
         try:
             created_documents = []
             for source in sources:
-                parsed = fetch_url_content(source)
-                created_documents.append(self._ingest_parsed_content(parsed, metadata, chunking, job_id))
+                parsed = fetch_url_content(source, self.settings)
+                if not parsed.text.strip():
+                    raise ValueError(f"No extractable text found at {source}")
+                created_documents.append(self._ingest_parsed_content(parsed, metadata, chunking, job_id, parsed.text.encode("utf-8")))
+                self.job_service.update_progress(job_id, int((len(created_documents) / max(1, len(sources))) * 90))
             self.job_service.mark_completed(job_id, {"documents": created_documents, "total": len(created_documents)})
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("URL ingestion failed", extra={"job_id": job_id})
-            self.job_service.mark_failed(job_id, str(exc))
+            self.job_service.mark_failed(job_id, str(exc), error_code="URL_INGESTION_FAILED")
 
     def list_documents(self) -> DocumentsListResponse:
         with self.session_factory() as session:
@@ -113,7 +146,7 @@ class DocumentService:
         return True
 
     def expand_urls(self, url: str | None, urls: list[str], sitemap_url: str | None) -> list[str]:
-        return expand_urls(url, urls, sitemap_url)
+        return expand_urls(url, urls, sitemap_url, self.settings)
 
     def _ingest_parsed_content(
         self,
@@ -121,11 +154,19 @@ class DocumentService:
         manual_metadata: dict[str, Any],
         chunking: ChunkingConfig,
         job_id: str,
+        raw_content: bytes,
     ) -> dict[str, Any]:
         merged_metadata = merge_metadata(manual_metadata, parsed.metadata)
         document_date = normalize_document_date(merged_metadata)
         category = merged_metadata.get("category")
-        document_id = self._next_document_id(parsed.title, parsed.source_uri)
+        source_hash = hashlib.sha256(raw_content).hexdigest()
+        merged_metadata["source_hash"] = source_hash
+        serialized_metadata = json.loads(json.dumps(merged_metadata, default=str))
+        document_id = self._existing_document_id_for_hash(source_hash, parsed.source_uri)
+        if document_id:
+            self.delete_document(document_id)
+        else:
+            document_id = self._next_document_id(parsed.title, parsed.source_uri)
         with self.session_factory() as session:
             record = DocumentRecord(
                 document_id=document_id,
@@ -136,7 +177,7 @@ class DocumentService:
                 document_date=document_date,
                 document_timestamp=to_timestamp(document_date),
                 status="processing",
-                metadata_json=json.dumps(merged_metadata, default=str),
+                metadata_json=json.dumps(serialized_metadata),
                 job_id=job_id,
             )
             session.add(record)
@@ -161,7 +202,8 @@ class DocumentService:
                         "document_timestamp": to_timestamp(document_date),
                         "chunk_index": chunk.chunk_index,
                         "chunk_text": chunk.text,
-                        "metadata": merged_metadata,
+                        "lexical_terms": _tokenize(chunk.text),
+                        "metadata": serialized_metadata,
                     },
                 )
             )
@@ -193,6 +235,15 @@ class DocumentService:
                 counter += 1
         return f"{candidate}-{counter}"
 
+    def _existing_document_id_for_hash(self, source_hash: str, source_uri: str) -> str | None:
+        with self.session_factory() as session:
+            records = session.scalars(select(DocumentRecord).where(DocumentRecord.source_uri == source_uri)).all()
+        for record in records:
+            metadata = json.loads(record.metadata_json or "{}")
+            if metadata.get("source_hash") == source_hash:
+                return record.document_id
+        return None
+
     def _serialize_document(self, record: DocumentRecord) -> DocumentResponse:
         return DocumentResponse(
             document_id=record.document_id,
@@ -213,3 +264,7 @@ def _slugify(value: str) -> str:
     while "--" in sanitized:
         sanitized = sanitized.replace("--", "-")
     return sanitized or "document"
+
+
+def _tokenize(text: str) -> list[str]:
+    return sorted(set(re.findall(r"[a-zA-Z0-9]{3,}", text.lower())))

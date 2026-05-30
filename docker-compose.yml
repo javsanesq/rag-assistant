@@ -1,12 +1,22 @@
-version: "3.9"
-
 services:
   api:
     build:
       context: .
       dockerfile: api/Dockerfile
-    env_file:
-      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////workspace/data/app.db}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-rag_assistant}
+      QDRANT_VECTOR_SIZE: ${QDRANT_VECTOR_SIZE:-384}
+      EMBED_PROVIDER: ${EMBED_PROVIDER:-mock}
+      EMBED_MODEL: ${EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      EVAL_DATASET_DIR: ${EVAL_DATASET_DIR:-/workspace/evals/datasets}
     ports:
       - "8000:8000"
     volumes:
@@ -15,7 +25,35 @@ services:
       - ./samples:/workspace/samples:ro
     depends_on:
       qdrant:
-        condition: service_started
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command: python -m rag_assistant_api.worker
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////workspace/data/app.db}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-rag_assistant}
+      QDRANT_VECTOR_SIZE: ${QDRANT_VECTOR_SIZE:-384}
+      EMBED_PROVIDER: ${EMBED_PROVIDER:-mock}
+      EMBED_MODEL: ${EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      EVAL_DATASET_DIR: ${EVAL_DATASET_DIR:-/workspace/evals/datasets}
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-2}
+    volumes:
+      - ./data:/workspace/data
+      - ./evals:/workspace/evals:ro
+      - ./samples:/workspace/samples:ro
+    depends_on:
+      qdrant:
+        condition: service_healthy
 
   qdrant:
     image: qdrant/qdrant:v1.10.1
@@ -24,6 +62,11 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   ui:
     image: nginx:1.27-alpine

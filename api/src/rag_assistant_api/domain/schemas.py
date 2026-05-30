@@ -3,13 +3,21 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ChunkingConfig(BaseModel):
     chunker_type: str = "recursive"
     chunk_size: int = 700
     chunk_overlap: int = 120
+
+    @field_validator("chunker_type")
+    @classmethod
+    def validate_chunker_type(cls, value: str) -> str:
+        allowed = {"recursive", "markdown", "sentence"}
+        if value not in allowed:
+            raise ValueError(f"chunker_type must be one of {sorted(allowed)}")
+        return value
 
 
 class URLIngestRequest(BaseModel):
@@ -38,6 +46,9 @@ class Citation(BaseModel):
     document_date: date | None = None
     excerpt: str
     score: float
+    dense_score: float
+    lexical_score: float = 0.0
+    final_score: float
     chunk_id: str
     chunk_index: int
 
@@ -49,6 +60,27 @@ class QueryRequest(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     top_k: int | None = None
+    retrieval_mode: Literal["dense", "hybrid"] = "hybrid"
+    alpha: float = 0.75
+    include_trace: bool = False
+
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("question is required.")
+        return stripped
+
+    @model_validator(mode="after")
+    def validate_query(self):
+        if self.top_k is not None and not 1 <= self.top_k <= 50:
+            raise ValueError("top_k must be between 1 and 50.")
+        if not 0 <= self.alpha <= 1:
+            raise ValueError("alpha must be between 0 and 1.")
+        if self.date_from and self.date_to and self.date_from > self.date_to:
+            raise ValueError("date_from must be before date_to.")
+        return self
 
 
 class QueryResponse(BaseModel):
@@ -56,6 +88,7 @@ class QueryResponse(BaseModel):
     citations: list[Citation]
     applied_filters: dict[str, Any]
     metrics: dict[str, Any]
+    trace: dict[str, Any] | None = None
 
 
 class JobResponse(BaseModel):
@@ -68,6 +101,11 @@ class JobResponse(BaseModel):
     updated_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    leased_until: datetime | None = None
+    progress: int = 0
+    attempts: int = 0
+    max_attempts: int = 3
+    error_code: str | None = None
     error_message: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     result: dict[str, Any] = Field(default_factory=dict)

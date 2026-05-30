@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: install test api ui docker-up docker-down lint
+.PHONY: install test api ui docker-up docker-config smoke docker-down lint
 
 install:
 	cd api && $(PYTHON) -m pip install -e .[dev]
@@ -17,6 +17,13 @@ ui:
 docker-up:
 	cp -n .env.example .env || true
 	docker compose up --build
+
+docker-config:
+	docker compose config
+
+smoke:
+	curl -f http://localhost:8000/health/live
+	curl -f http://localhost:8000/health/ready
 
 docker-down:
 	docker compose down

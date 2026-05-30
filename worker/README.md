@@ -1,5 +1,11 @@
 # Worker Notes
 
-The v1 system uses FastAPI background tasks for ingestion and evaluation jobs so the repository stays lightweight for local Docker usage.
+The API only enqueues ingestion and evaluation jobs. The worker process claims durable jobs from the SQL database, leases them, executes them, and writes progress/results back to the jobs table.
 
-This directory is reserved for future extraction into a dedicated worker service. For now, the API package exposes reusable job runners that can be invoked by a CLI or a separate process later without changing the public API.
+Local Docker starts the worker with:
+
+```bash
+python -m rag_assistant_api.worker
+```
+
+The queue intentionally uses the same SQLAlchemy database as the API instead of Redis/Celery so this project remains portable across local Docker, VPS, and simple platform-as-a-service deployments.

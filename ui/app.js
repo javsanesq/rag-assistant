@@ -6,6 +6,19 @@ const state = {
   evals: [],
 };
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function safeJson(value) {
+  return escapeHtml(JSON.stringify(value ?? {}, null, 2));
+}
+
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -39,12 +52,12 @@ function renderDocuments() {
         <article class="doc-row">
           <div class="doc-header">
             <div>
-              <strong>${doc.title}</strong>
-              <div class="doc-meta">${doc.document_id} · ${doc.source_type} · ${doc.chunk_count} chunks</div>
+              <strong>${escapeHtml(doc.title)}</strong>
+              <div class="doc-meta">${escapeHtml(doc.document_id)} · ${escapeHtml(doc.source_type)} · ${doc.chunk_count} chunks</div>
             </div>
-            <button data-delete="${doc.document_id}">Delete</button>
+            <button data-delete="${escapeHtml(doc.document_id)}">Delete</button>
           </div>
-          <div class="doc-meta">${doc.category || "uncategorized"} ${doc.document_date ? `· ${doc.document_date}` : ""}</div>
+          <div class="doc-meta">${escapeHtml(doc.category || "uncategorized")} ${doc.document_date ? `· ${escapeHtml(doc.document_date)}` : ""}</div>
         </article>
       `;
     })
@@ -77,11 +90,13 @@ function renderJobs() {
       (job) => `
         <article class="timeline-row">
           <div class="timeline-header">
-            <strong>${job.status}</strong>
-            <span class="pill">${job.job_type}</span>
+            <strong>${escapeHtml(job.status)}</strong>
+            <span class="pill">${escapeHtml(job.job_type)}</span>
           </div>
-          <div class="timeline-meta">${job.id}</div>
-          <div class="timeline-meta">${JSON.stringify(job.payload)}</div>
+          <div class="metrics">progress ${job.progress ?? 0}% · attempts ${job.attempts ?? 0}/${job.max_attempts ?? 3}</div>
+          <div class="timeline-meta">${escapeHtml(job.id)}</div>
+          ${job.error_message ? `<div class="timeline-meta">${escapeHtml(job.error_code || "error")}: ${escapeHtml(job.error_message)}</div>` : ""}
+          <pre class="timeline-meta">${safeJson(job.result)}</pre>
         </article>
       `
     )
@@ -100,12 +115,13 @@ function renderEvals() {
       return `
         <article class="timeline-row">
           <div class="timeline-header">
-            <strong>${job.dataset_name || "dataset"}</strong>
-            <span class="pill">${job.status}</span>
+            <strong>${escapeHtml(job.dataset_name || "dataset")}</strong>
+            <span class="pill">${escapeHtml(job.status)}</span>
           </div>
           <div class="metrics">
             precision@k ${summary.precision_at_k ?? "-"} · hit rate ${summary.hit_rate ?? "-"} · faithfulness ${summary.faithfulness_score ?? "-"}
           </div>
+          <pre class="timeline-meta">${safeJson(summary.by_filter || {})}</pre>
         </article>
       `;
     })
@@ -118,7 +134,7 @@ function appendMessage(role, body, citations = [], metrics = null) {
   wrapper.className = `message ${role}`;
   wrapper.innerHTML = `
     <div class="section-kicker">${role === "user" ? "Prompt" : "Answer"}</div>
-    <div class="message-body">${body}</div>
+    <div class="message-body">${escapeHtml(body)}</div>
     ${
       metrics
         ? `<div class="metrics">latency ${metrics.latency_ms}ms · retrieved ${metrics.retrieved_count}</div>`
@@ -130,9 +146,9 @@ function appendMessage(role, body, citations = [], metrics = null) {
             .map(
               (citation) => `
               <div class="citation">
-                <strong>${citation.title}</strong>
-                <div class="doc-meta">${citation.document_id} · score ${citation.score.toFixed(3)}</div>
-                <div>${citation.excerpt}</div>
+                <strong>${escapeHtml(citation.title)}</strong>
+                <div class="doc-meta">${escapeHtml(citation.document_id)} · final ${citation.final_score.toFixed(3)} · dense ${citation.dense_score.toFixed(3)} · lexical ${citation.lexical_score.toFixed(3)}</div>
+                <div>${escapeHtml(citation.excerpt)}</div>
               </div>
             `
             )
@@ -166,7 +182,15 @@ document.getElementById("file-form").addEventListener("submit", async (event) =>
   const formData = new FormData();
   [...files].forEach((file) => formData.append("files", file));
   const metadataRaw = document.getElementById("metadata-json").value.trim();
-  if (metadataRaw) formData.append("metadata_json", metadataRaw);
+  if (metadataRaw) {
+    try {
+      JSON.parse(metadataRaw);
+    } catch (error) {
+      renderStatus(`Invalid metadata JSON: ${error.message}`, false);
+      return;
+    }
+    formData.append("metadata_json", metadataRaw);
+  }
   await fetchJson(`${apiBase}/v1/documents/files`, { method: "POST", body: formData });
   await refreshAll();
 });
@@ -201,9 +225,13 @@ document.getElementById("query-form").addEventListener("submit", async (event) =
         .value.split(",")
         .map((item) => item.trim())
         .filter(Boolean),
+      include_trace: true,
     }),
   });
   appendMessage("assistant", response.answer, response.citations, response.metrics);
+  if (!response.citations.length) {
+    renderStatus("Query returned no citations", false);
+  }
 });
 
 document.getElementById("eval-form").addEventListener("submit", async (event) => {

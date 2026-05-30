@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from rag_assistant_api.domain.schemas import EvalRunRequest, JobResponse
 
@@ -8,10 +8,17 @@ router = APIRouter(prefix="/api/v1/evals", tags=["evaluations"])
 
 
 @router.post("/runs", response_model=JobResponse)
-def start_eval(request: Request, body: EvalRunRequest, background_tasks: BackgroundTasks) -> JobResponse:
-    job_id = request.app.state.evaluation_service.queue_run(body)
-    background_tasks.add_task(request.app.state.evaluation_service.run_evaluation, job_id, body)
+def start_eval(request: Request, body: EvalRunRequest) -> JobResponse:
+    try:
+        job_id = request.app.state.evaluation_service.queue_run(body)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return request.app.state.job_service.get_job(job_id)
+
+
+@router.get("/datasets")
+def list_eval_datasets(request: Request) -> dict:
+    return {"datasets": request.app.state.evaluation_service.list_datasets()}
 
 
 @router.get("/runs", response_model=list[JobResponse])

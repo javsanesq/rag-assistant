@@ -1,6 +1,6 @@
 # RAG Assistant
 
-Production-grade RAG assistant built with FastAPI, Qdrant, SQLite-backed job metadata, offline evaluation, visible citations, and a polished operations UI.
+Production-grade RAG assistant built with FastAPI, Qdrant, durable SQL-backed jobs, offline evaluation, visible citations, and a polished operations UI.
 
 ## What it demonstrates
 
@@ -9,12 +9,12 @@ Production-grade RAG assistant built with FastAPI, Qdrant, SQLite-backed job met
 - Embeddings plus Qdrant vector retrieval with document, date, and category filters
 - Citation-rich answers with applied-filter telemetry
 - Offline evaluation with `precision@k`, `hit_rate@k`, and a faithfulness rubric
-- Structured logging, background jobs, tests, Docker, and a strong portfolio UI
+- Structured logging, durable worker jobs, tests, Docker, and a strong portfolio UI
 
 ## Stack
 
 - API: FastAPI + SQLAlchemy + Qdrant client
-- Storage: Qdrant for vectors, SQLite for documents and jobs
+- Storage: Qdrant for vectors, SQLite by default for metadata/jobs, Postgres via `DATABASE_URL`
 - Parsing: `pypdf`, `python-docx`, `beautifulsoup4`, `PyYAML`
 - Embeddings: sentence-transformers or OpenAI
 - LLM: mock, OpenAI, or Ollama
@@ -34,6 +34,8 @@ Open:
 - API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Qdrant: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 
+`docker compose` starts four services: API, worker, Qdrant, and UI. The API enqueues ingestion/evaluation jobs; the worker claims and executes them.
+
 ## Local development
 
 ```bash
@@ -43,6 +45,14 @@ source .venv/bin/activate
 make install
 make test
 make api
+```
+
+Run the worker locally in a second terminal:
+
+```bash
+cd /Users/javiersanchezesquivel/Desktop/Proyectos/rag-assistant
+source .venv/bin/activate
+cd api && PYTHONPATH=src python -m rag_assistant_api.worker
 ```
 
 ## Core flows
@@ -55,6 +65,8 @@ make api
 - Optional `metadata_json`
 - Optional `chunker_type`, `chunk_size`, `chunk_overlap`
 - Queues an ingestion job and persists document metadata
+- Stores accepted uploads under `data/uploads/`
+- Rejects unsupported extensions, empty files, and oversized files before enqueueing
 
 ### URL ingestion
 
@@ -62,6 +74,7 @@ make api
 
 - Accepts a single URL, a list of URLs, or a sitemap URL
 - Uses the same normalization and chunking pipeline as file ingestion
+- Blocks private/local URL targets by default and caps response/sitemap size
 
 ### Querying
 
@@ -70,6 +83,7 @@ make api
 - Accepts `question`
 - Optional `document_ids`, `category`, `date_from`, `date_to`
 - Returns `answer`, `citations`, `applied_filters`, and timing metadata
+- Supports `retrieval_mode`, `alpha`, and `include_trace` for hybrid dense/lexical retrieval diagnostics
 
 ### Evaluation
 
@@ -78,6 +92,27 @@ make api
 - Runs against checked-in datasets under `evals/datasets`
 - Computes retrieval metrics and a faithfulness rubric
 - Stores per-example rationale and aggregate summaries
+- Reports `precision@k`, `hit_rate@k`, `recall@k`, `mrr`, faithfulness, and per-filter summaries
+
+### Jobs
+
+`GET /api/v1/jobs/{job_id}`
+
+- Returns status, progress, attempts, errors, payload, and result summary
+
+`POST /api/v1/jobs/{job_id}/retry`
+
+- Requeues failed jobs without creating a duplicate job record
+
+## Smoke checks
+
+```bash
+docker compose config
+docker compose up --build
+curl -f http://localhost:8000/health/live
+curl -f http://localhost:8000/health/ready
+node --check ui/app.js
+```
 
 ## Repository layout
 

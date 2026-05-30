@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import re
 
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, FieldCondition, Filter, MatchAny, MatchValue, PointStruct, Range, VectorParams
@@ -19,6 +20,9 @@ class RetrievedChunk:
     document_date: date | None
     excerpt: str
     score: float
+    dense_score: float
+    lexical_score: float
+    final_score: float
     chunk_index: int
 
 
@@ -54,20 +58,28 @@ class QdrantVectorStore:
         category: str | None = None,
         date_from_timestamp: int | None = None,
         date_to_timestamp: int | None = None,
+        query_text: str = "",
+        retrieval_mode: str = "hybrid",
+        alpha: float = 0.75,
     ) -> list[RetrievedChunk]:
         filter_ = self._build_filter(document_ids, category, date_from_timestamp, date_to_timestamp)
         response = self.client.query_points(
             collection_name=self.collection_name,
             query=query_vector,
-            limit=top_k,
+            limit=top_k * 4 if retrieval_mode == "hybrid" else top_k,
             query_filter=filter_,
             with_payload=True,
         )
         hits = response.points
         results: list[RetrievedChunk] = []
+        query_terms = _tokenize(query_text)
         for hit in hits:
             payload = hit.payload or {}
             document_date = date.fromisoformat(payload["document_date"]) if payload.get("document_date") else None
+            dense_score = float(hit.score)
+            dense_for_final = max(0.0, min(1.0, dense_score))
+            lexical_score = _lexical_score(query_terms, payload.get("lexical_terms") or [])
+            final_score = dense_for_final if retrieval_mode == "dense" else alpha * dense_for_final + (1 - alpha) * lexical_score
             results.append(
                 RetrievedChunk(
                     chunk_id=str(hit.id),
@@ -77,11 +89,14 @@ class QdrantVectorStore:
                     category=payload.get("category"),
                     document_date=document_date,
                     excerpt=str(payload.get("chunk_text", "")),
-                    score=float(hit.score),
+                    score=final_score,
+                    dense_score=dense_score,
+                    lexical_score=lexical_score,
+                    final_score=final_score,
                     chunk_index=int(payload.get("chunk_index", 0)),
                 )
             )
-        return results
+        return sorted(results, key=lambda item: item.final_score, reverse=True)[:top_k]
 
     def healthcheck(self) -> bool:
         return bool(self.client.get_collections().collections or True)
@@ -109,3 +124,15 @@ class QdrantVectorStore:
                 )
             )
         return Filter(must=must) if must else None
+
+
+def _tokenize(text: str) -> list[str]:
+    return [token for token in re.findall(r"[a-zA-Z0-9]{3,}", text.lower()) if token]
+
+
+def _lexical_score(query_terms: list[str], chunk_terms: list[str]) -> float:
+    if not query_terms or not chunk_terms:
+        return 0.0
+    query_set = set(query_terms)
+    chunk_set = set(chunk_terms)
+    return len(query_set & chunk_set) / len(query_set)

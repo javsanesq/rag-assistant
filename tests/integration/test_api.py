@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rag_assistant_api.worker import run_once
+
 
 def _sample_path(name: str) -> Path:
     return Path(__file__).resolve().parents[2] / "samples" / "knowledge" / name
@@ -20,7 +22,8 @@ def test_file_ingest_query_and_eval_flow(client):
     ]
     ingest_response = client.post("/api/v1/documents/files", files=files)
     assert ingest_response.status_code == 200
-    assert ingest_response.json()["status"] in {"queued", "completed"}
+    assert ingest_response.json()["status"] == "queued"
+    assert run_once(client.app.state.runtime) is True
 
     docs_response = client.get("/api/v1/documents")
     assert docs_response.status_code == 200
@@ -35,11 +38,36 @@ def test_file_ingest_query_and_eval_flow(client):
     query_payload = query_response.json()
     assert query_payload["citations"]
     assert "30 calendar days" in query_payload["answer"]
+    assert query_payload["citations"][0]["final_score"] >= query_payload["citations"][0]["lexical_score"] * 0
 
     eval_response = client.post("/api/v1/evals/runs", json={"dataset_name": "portfolio_eval.jsonl"})
     assert eval_response.status_code == 200
     run_id = eval_response.json()["id"]
+    assert run_once(client.app.state.runtime) is True
 
     run_detail = client.get(f"/api/v1/evals/runs/{run_id}")
     assert run_detail.status_code == 200
-    assert run_detail.json()["status"] in {"queued", "completed"}
+    assert run_detail.json()["status"] == "completed"
+    assert "mrr" in run_detail.json()["result"]["summary"]
+
+
+def test_invalid_upload_is_rejected(client):
+    response = client.post(
+        "/api/v1/documents/files",
+        files=[("files", ("notes.txt", b"not supported", "text/plain"))],
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["rejected_files"][0]["reason"].startswith("Unsupported")
+
+
+def test_private_url_is_blocked(client):
+    response = client.post("/api/v1/documents/urls", json={"url": "http://127.0.0.1:8080"})
+    assert response.status_code == 400
+    assert "blocked" in response.json()["detail"].lower()
+
+
+def test_eval_datasets_are_listed(client):
+    response = client.get("/api/v1/evals/datasets")
+    assert response.status_code == 200
+    datasets = response.json()["datasets"]
+    assert any(item["name"] == "portfolio_eval.jsonl" and item["status"] == "valid" for item in datasets)
