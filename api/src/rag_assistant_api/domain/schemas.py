@@ -89,6 +89,9 @@ class QueryResponse(BaseModel):
     applied_filters: dict[str, Any]
     metrics: dict[str, Any]
     trace: dict[str, Any] | None = None
+    grounded: bool = False
+    used_citation_ids: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class JobResponse(BaseModel):

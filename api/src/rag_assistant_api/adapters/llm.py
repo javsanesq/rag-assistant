@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from abc import ABC, abstractmethod
 
 import httpx
@@ -25,6 +26,13 @@ class MockLLMProvider(LLMProvider):
         if not context_blocks:
             return "I could not find grounded context for that question in the indexed documents."
         primary = context_blocks[0]
+        match = re.match(r"^\[(\d+)\]\s*(.*)$", primary, flags=re.DOTALL)
+        if match:
+            content = match.group(2).strip()
+            lines = content.splitlines()
+            if lines and lines[0].startswith("chunk_id="):
+                content = "\n".join(lines[1:]).strip()
+            return f"Grounded answer: {content[:450].strip()} [{match.group(1)}]"
         return f"Grounded answer: {primary[:450].strip()}"
 
     def judge_faithfulness(self, question: str, answer: str, citations: list[dict]) -> dict:
@@ -50,7 +58,9 @@ class OpenAILLMProvider(LLMProvider):
     def answer(self, question: str, context_blocks: list[str]) -> str:
         prompt = (
             "You are a grounded RAG assistant. Answer only with information supported by the provided context. "
-            "If the context is insufficient, say so plainly.\n\n"
+            "Every factual sentence must include at least one citation marker from the provided context, such as [1]. "
+            "Use only citation markers that appear in the context. If the context is insufficient, say: "
+            "\"I do not have enough evidence in the indexed documents to answer that.\" and cite nothing.\n\n"
             f"Question: {question}\n\n"
             "Context:\n"
             + "\n\n".join(context_blocks)
@@ -87,7 +97,8 @@ class OllamaLLMProvider(LLMProvider):
 
     def answer(self, question: str, context_blocks: list[str]) -> str:
         prompt = (
-            "Answer only from the context below. If the context is insufficient, say that directly.\n\n"
+            "Answer only from the context below. Every factual sentence must include a citation marker like [1]. "
+            "Use only citation markers from the context. If the context is insufficient, say that directly without citations.\n\n"
             f"Question: {question}\n\nContext:\n" + "\n\n".join(context_blocks)
         )
         response = httpx.post(

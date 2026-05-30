@@ -168,7 +168,7 @@ function renderEvals() {
     .join("");
 }
 
-function appendMessage(role, body, citations = [], metrics = null) {
+function appendMessage(role, body, citations = [], metrics = null, grounding = null) {
   const log = document.getElementById("chat-log");
 
   const emptyHint = document.getElementById("empty-hint");
@@ -182,6 +182,19 @@ function appendMessage(role, body, citations = [], metrics = null) {
     ${
       metrics
         ? `<div class="message-metrics">latency ${metrics.latency_ms}ms · retrieved ${metrics.retrieved_count}</div>`
+        : ""
+    }
+    ${
+      grounding
+        ? `<div class="message-metrics ${grounding.grounded ? "grounded-ok" : "grounded-warn"}">
+            ${grounding.grounded ? "grounded" : "not fully grounded"}
+            ${grounding.usedCitationIds.length ? ` · used chunks ${grounding.usedCitationIds.map(escapeHtml).join(", ")}` : ""}
+          </div>`
+        : ""
+    }
+    ${
+      grounding && grounding.warnings.length
+        ? `<div class="message-warning">${grounding.warnings.map(escapeHtml).join(" ")}</div>`
         : ""
     }
     ${
@@ -273,7 +286,11 @@ document.getElementById("query-form").addEventListener("submit", async (event) =
       include_trace: true,
     }),
   });
-  appendMessage("assistant", response.answer, response.citations, response.metrics);
+  appendMessage("assistant", response.answer, response.citations, response.metrics, {
+    grounded: response.grounded,
+    usedCitationIds: response.used_citation_ids || [],
+    warnings: response.warnings || [],
+  });
   if (!response.citations.length) {
     renderStatus("Query returned no citations", false);
   }

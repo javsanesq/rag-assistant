@@ -9,6 +9,7 @@ Production-grade RAG assistant built with FastAPI, Qdrant, durable SQL-backed jo
 - Embeddings plus Qdrant vector retrieval with document, date, and category filters
 - Hybrid retrieval that fuses dense Qdrant candidates with an SQL-backed lexical chunk index
 - Citation-rich answers with applied-filter telemetry
+- Citation-grounded answer validation with used chunk IDs and grounding warnings
 - Offline evaluation with `precision@k`, `hit_rate@k`, and a faithfulness rubric
 - Structured logging, durable worker jobs, tests, Docker, and a strong portfolio UI
 
@@ -93,6 +94,7 @@ cd api && PYTHONPATH=src python -m rag_assistant_api.worker
 - Returns `answer`, `citations`, `applied_filters`, and timing metadata
 - Supports `retrieval_mode`, `alpha`, and `include_trace` for hybrid dense/lexical retrieval diagnostics
 - Hybrid mode independently retrieves lexical candidates, so exact-match terms can rescue chunks missed by dense search
+- Validates that generated answers cite retrieved context; uncited answers are repaired with a citation-grounded fallback
 
 ### Evaluation
 

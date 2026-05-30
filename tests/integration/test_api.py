@@ -43,6 +43,9 @@ def test_file_ingest_query_and_eval_flow(client):
     query_payload = query_response.json()
     assert query_payload["citations"]
     assert "30 calendar days" in query_payload["answer"]
+    assert query_payload["grounded"] is True
+    assert query_payload["used_citation_ids"] == [query_payload["citations"][0]["chunk_id"]]
+    assert "[1]" in query_payload["answer"]
     assert query_payload["citations"][0]["final_score"] >= query_payload["citations"][0]["lexical_score"] * 0
 
     eval_response = client.post("/api/v1/evals/runs", json={"dataset_name": "portfolio_eval.jsonl"})

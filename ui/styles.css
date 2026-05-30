@@ -195,6 +195,20 @@ body::before {
   color: var(--muted);
 }
 
+.grounded-ok { color: var(--accent); }
+.grounded-warn { color: var(--danger); }
+
+.message-warning {
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 156, 135, 0.25);
+  background: rgba(255, 156, 135, 0.08);
+  color: var(--danger);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .citation-strip {
   display: grid;
   gap: 8px;
