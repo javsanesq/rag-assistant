@@ -172,6 +172,16 @@ The E2E smoke uploads the checked-in sample knowledge base, waits for the worker
 START_STACK=1 make smoke-e2e
 ```
 
+## Benchmark
+
+Run the OpenAI-backed benchmark to compare dense retrieval, SQLite FTS5 BM25 hybrid retrieval, and OpenAI reranking:
+
+```bash
+OPENAI_API_KEY=... make benchmark
+```
+
+The benchmark indexes `samples/benchmark`, evaluates `evals/datasets/benchmark_eval.jsonl`, writes the committed report to `docs/benchmark-report.md`, and stores raw local results under `output/evals/benchmark-results.json`.
+
 ## Repository layout
 
 ```text

@@ -1,5 +1,8 @@
 from rag_assistant_api.adapters.vector_store import _lexical_score, _tokenize
+from rag_assistant_api.adapters.lexical_store import SQLLexicalStore
 from rag_assistant_api.adapters.vector_store import RetrievedChunk
+from rag_assistant_api.core.db import build_engine, build_session_factory
+from rag_assistant_api.domain.models import ChunkRecord
 from rag_assistant_api.domain.schemas import QueryRequest
 from rag_assistant_api.services.retrieval import RetrievalService
 
@@ -29,6 +32,45 @@ def test_hybrid_retrieval_can_return_lexical_candidate_when_dense_misses():
 
     assert [item.document_id for item in results] == ["lexical-document"]
     assert results[0].lexical_score == 1.0
+
+
+def test_sqlite_fts_bm25_lexical_store_ranks_exact_terms(tmp_path):
+    engine = build_engine(f"sqlite:///{tmp_path / 'fts.db'}")
+    ChunkRecord.metadata.create_all(engine)
+    session_factory = build_session_factory(engine)
+    with session_factory() as session:
+        session.add_all(
+            [
+                ChunkRecord(
+                    chunk_id="exact",
+                    document_id="security-runbook",
+                    title="Security Runbook",
+                    source_uri="security.md",
+                    source_type="markdown",
+                    category="security",
+                    chunk_index=0,
+                    chunk_text="The emergency rotation keyword is KESTREL-42-ZETA.",
+                    lexical_terms_json='["emergency", "rotation", "keyword", "kestrel", "zeta"]',
+                ),
+                ChunkRecord(
+                    chunk_id="weak",
+                    document_id="general",
+                    title="General",
+                    source_uri="general.md",
+                    source_type="markdown",
+                    category="security",
+                    chunk_index=0,
+                    chunk_text="The weekly security meeting reviews access requests.",
+                    lexical_terms_json='["weekly", "security", "meeting", "access"]',
+                ),
+            ]
+        )
+        session.commit()
+
+    results = SQLLexicalStore(session_factory).search("What is the KESTREL-42-ZETA keyword?", top_k=2)
+
+    assert results[0].chunk_id == "exact"
+    assert results[0].document_id == "security-runbook"
 
 
 class FakeEmbeddingProvider:
