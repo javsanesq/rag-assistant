@@ -1,6 +1,6 @@
-# Recovered Baseline Notes
+# Implementation Scope Notes
 
-The previous local `rag-system` checkout was docs-only, but its design notes and run guide established the baseline features that this repository preserves or expands:
+This repository is organized around the behaviors expected from a deployable RAG assistant:
 
 - FastAPI API with Qdrant-backed retrieval
 - File and URL ingestion
@@ -8,6 +8,9 @@ The previous local `rag-system` checkout was docs-only, but its design notes and
 - Visible citations in the UI
 - Basic retrieval metrics in responses
 - Compact, dark, operational UI direction
-- Known missing pieces: evaluation pipeline, durable metadata store, and stronger architecture boundaries
+- Offline evaluation
+- Durable metadata and job storage
+- Clear service/adaptor boundaries
+- Docker-based local deployment
 
-This repository replaces that missing implementation with a new codebase designed for publication quality and long-term extension.
+The current implementation keeps the scope intentionally single-tenant and portable. It favors clear architecture, deterministic local smoke tests, and inspectable quality metrics over enterprise-only concerns such as SSO, tenant isolation, and compliance workflows.

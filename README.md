@@ -1,5 +1,8 @@
 # RAG Assistant
 
+[![CI](https://github.com/javsanesq/rag-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/javsanesq/rag-assistant/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Production-grade RAG assistant built with FastAPI, Qdrant, durable SQL-backed jobs, offline evaluation, visible citations, and a polished operations UI.
 
 ## What it demonstrates
@@ -26,7 +29,8 @@ Production-grade RAG assistant built with FastAPI, Qdrant, durable SQL-backed jo
 ## Quickstart
 
 ```bash
-cd /Users/javiersanchezesquivel/Desktop/Proyectos/rag-assistant
+git clone https://github.com/javsanesq/rag-assistant.git
+cd rag-assistant
 cp .env.example .env
 docker compose up --build
 ```
@@ -43,7 +47,6 @@ The API and worker apply Alembic migrations at startup, so a fresh `DATABASE_URL
 ## Local development
 
 ```bash
-cd /Users/javiersanchezesquivel/Desktop/Proyectos/rag-assistant
 python3 -m venv .venv
 source .venv/bin/activate
 make install
@@ -61,10 +64,20 @@ pip install -e '.[local-embeddings]'
 Run the worker locally in a second terminal:
 
 ```bash
-cd /Users/javiersanchezesquivel/Desktop/Proyectos/rag-assistant
 source .venv/bin/activate
 cd api && PYTHONPATH=src python -m rag_assistant_api.worker
 ```
+
+## Configuration
+
+This repository intentionally commits `.env.example` and ignores real `.env` files. The example file documents the runtime contract with safe placeholder values; secrets such as `OPENAI_API_KEY` must live only in your local environment, deployment secret manager, or untracked `.env`.
+
+Important defaults:
+
+- `EMBED_PROVIDER=mock` and `LLM_PROVIDER=mock` keep Docker smoke tests deterministic and usable without paid API keys.
+- Set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=...` for hosted answer generation.
+- Set `DATABASE_URL=postgresql+psycopg://...` when deploying against Postgres instead of local SQLite.
+- Relevance thresholds are configurable through `RELEVANCE_MIN_*` environment variables.
 
 ## Database migrations
 
@@ -162,14 +175,13 @@ START_STACK=1 make smoke-e2e
 ```text
 rag-assistant/
 ├── api/                    # FastAPI package
-├── docs/reference/         # Recovered reference notes from the earlier prototype
+├── docs/                   # Architecture and implementation notes
 ├── evals/datasets/         # Offline evaluation sets
 ├── samples/knowledge/      # Example knowledge base docs
 ├── tests/                  # Unit and integration tests
-├── ui/                     # Static operations UI
-└── worker/                 # CLI entrypoints and background-job notes
+└── ui/                     # Static operations UI
 ```
 
-## Reference context
+## Project Notes
 
-The earlier `rag-system` project in `/Users/javiersanchezesquivel/Desktop/Proyectos/rag-system` is retained as reference-only. This repository rebuilds the system around explicit service boundaries rather than a framework-led prototype.
+The API and worker live in the same Python package because they share domain models, database access, providers, and service-layer code. Docker Compose starts them as separate processes: the API handles HTTP requests, while the worker claims durable jobs and executes ingestion/evaluation outside the request path.
