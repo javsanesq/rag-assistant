@@ -33,7 +33,7 @@ def parse_document_date(value: Any) -> date | None:
 
 def parse_file_bytes(filename: str, content: bytes) -> ParsedContent:
     suffix = Path(filename).suffix.lower()
-    if suffix == ".md":
+    if suffix in {".md", ".markdown"}:
         return _parse_markdown(filename, content.decode("utf-8"))
     if suffix == ".pdf":
         reader = PdfReader(BytesIO(content))

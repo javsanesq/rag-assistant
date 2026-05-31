@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    api_auth_token: str = ""
+    api_docs_enabled: bool = True
     database_url: str | None = None
     worker_poll_seconds: float = 2.0
     job_lease_seconds: int = 300
@@ -68,6 +70,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_settings(self):
+        self.embed_provider = self.embed_provider.lower()
+        self.llm_provider = self.llm_provider.lower()
+        self.app_env = self.app_env.lower()
         if self.qdrant_vector_size <= 0:
             raise ValueError("QDRANT_VECTOR_SIZE must be positive.")
         if self.top_k <= 0:
@@ -82,6 +87,10 @@ class Settings(BaseSettings):
             raise ValueError("RELEVANCE_MIN_MEANINGFUL_TERMS must be non-negative.")
         if self.default_chunk_overlap >= self.default_chunk_size:
             raise ValueError("DEFAULT_CHUNK_OVERLAP must be smaller than DEFAULT_CHUNK_SIZE.")
+        if self.app_env == "production" and "mock" in {self.embed_provider, self.llm_provider}:
+            raise ValueError("Mock providers are not allowed when APP_ENV=production.")
+        if self.app_env == "production" and not self.api_auth_token:
+            raise ValueError("API_AUTH_TOKEN is required when APP_ENV=production.")
         if self.embed_provider == "openai" and not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when EMBED_PROVIDER=openai.")
         if self.llm_provider == "openai" and not self.openai_api_key:

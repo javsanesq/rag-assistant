@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import case, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from rag_assistant_api.domain.models import JobRecord
@@ -76,31 +76,52 @@ class JobService:
 
     def claim_next(self, job_types: list[str] | None = None) -> JobRecord | None:
         now = datetime.now(timezone.utc)
+        leased_until = now + timedelta(seconds=self.lease_seconds)
         with self.session_factory() as session:
             stmt = (
-                select(JobRecord)
+                select(JobRecord.id)
                 .where(JobRecord.status.in_(["queued", "running"]))
                 .where(JobRecord.attempts < JobRecord.max_attempts)
                 .where(or_(JobRecord.leased_until.is_(None), JobRecord.leased_until < now))
                 .order_by(JobRecord.created_at.asc())
+                .limit(10)
             )
             if job_types:
                 stmt = stmt.where(JobRecord.job_type.in_(job_types))
-            job = session.scalars(stmt).first()
-            if not job:
-                return None
-            if job.status == "queued" and job.started_at is None:
-                job.started_at = now
-            job.status = "running"
-            job.attempts += 1
-            job.leased_until = datetime.fromtimestamp(now.timestamp() + self.lease_seconds, tz=timezone.utc)
-            job.error_code = None
-            job.error_message = None
-            session.add(job)
-            session.commit()
-            session.refresh(job)
-            logger.info("Job claimed", extra={"job_id": job.id, "event": "job_claimed"})
-            return job
+            candidate_ids = list(session.scalars(stmt).all())
+
+            for candidate_id in candidate_ids:
+                claim_stmt = (
+                    update(JobRecord)
+                    .where(JobRecord.id == candidate_id)
+                    .where(JobRecord.status.in_(["queued", "running"]))
+                    .where(JobRecord.attempts < JobRecord.max_attempts)
+                    .where(or_(JobRecord.leased_until.is_(None), JobRecord.leased_until < now))
+                    .values(
+                        status="running",
+                        started_at=case(
+                            (JobRecord.started_at.is_(None), now),
+                            else_=JobRecord.started_at,
+                        ),
+                        attempts=JobRecord.attempts + 1,
+                        leased_until=leased_until,
+                        error_code=None,
+                        error_message=None,
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                result = session.execute(claim_stmt)
+                if result.rowcount != 1:
+                    session.rollback()
+                    continue
+
+                session.commit()
+                job = session.get(JobRecord, candidate_id)
+                if not job:
+                    return None
+                logger.info("Job claimed", extra={"job_id": job.id, "event": "job_claimed"})
+                return job
+            return None
 
     def retry_job(self, job_id: str) -> JobResponse | None:
         with self.session_factory() as session:
@@ -111,6 +132,7 @@ class JobService:
                 return self._serialize(job)
             job.status = "queued"
             job.progress = 0
+            job.attempts = 0
             job.error_code = None
             job.error_message = None
             job.completed_at = None

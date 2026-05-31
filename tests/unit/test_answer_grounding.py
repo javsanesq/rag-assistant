@@ -12,14 +12,36 @@ def test_grounded_answer_accepts_valid_citation_marker():
     assert grounding["warnings"] == []
 
 
-def test_uncited_answer_is_repaired_with_cited_fallback():
+def test_uncited_answer_abstains_instead_of_using_fallback_chunk():
     answer, grounding = _validate_or_repair_answer("Refunds are available for 30 days.", {"1": _chunk("chunk-a")})
 
-    assert answer.endswith("[1]")
-    assert "Refunds are available within 30 calendar days" in answer
-    assert grounding["grounded"] is True
-    assert grounding["used_citation_ids"] == ["chunk-a"]
-    assert grounding["warnings"]
+    assert answer == "I do not have enough evidence in the indexed documents to answer that."
+    assert grounding["grounded"] is False
+    assert grounding["used_citation_ids"] == []
+    assert grounding["warnings"] == [
+        "Model answer did not cite retrieved context; abstained instead of returning an unsupported answer."
+    ]
+
+
+def test_invalid_citation_marker_abstains_even_with_valid_citation_present():
+    answer, grounding = _validate_or_repair_answer(
+        "Refunds are available for 30 days [1], and expedited refunds take two days [9].",
+        {"1": _chunk("chunk-a")},
+    )
+
+    assert answer == "I do not have enough evidence in the indexed documents to answer that."
+    assert grounding["grounded"] is False
+    assert grounding["used_citation_ids"] == []
+    assert grounding["warnings"] == ["Model answer used unsupported citation markers: [9]."]
+
+
+def test_only_invalid_citation_marker_does_not_fallback_to_first_chunk():
+    answer, grounding = _validate_or_repair_answer("Refunds are available for 30 days [7].", {"1": _chunk("chunk-a")})
+
+    assert answer == "I do not have enough evidence in the indexed documents to answer that."
+    assert grounding["grounded"] is False
+    assert grounding["used_citation_ids"] == []
+    assert grounding["warnings"] == ["Model answer used unsupported citation markers: [7]."]
 
 
 def test_no_retrieved_citations_returns_insufficient_evidence():

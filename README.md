@@ -78,6 +78,8 @@ Important defaults:
 - Set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=...` for hosted answer generation.
 - Set `DATABASE_URL=postgresql+psycopg://...` when deploying against Postgres instead of local SQLite.
 - Relevance thresholds are configurable through `RELEVANCE_MIN_*` environment variables.
+- Set `API_AUTH_TOKEN` before exposing the API outside local development. When `APP_ENV=production`, mock providers are rejected and `API_AUTH_TOKEN` is required.
+- Docker Compose binds demo ports to `127.0.0.1` by default. Put Qdrant on a private network and expose only the UI/API through a reverse proxy for production.
 
 ## Database migrations
 
@@ -126,7 +128,7 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/rag_assistant mak
 - Returns `answer`, `citations`, `applied_filters`, and timing metadata
 - Supports `retrieval_mode`, `alpha`, and `include_trace` for hybrid dense/lexical retrieval diagnostics
 - Hybrid mode independently retrieves lexical candidates, so exact-match terms can rescue chunks missed by dense search
-- Validates that generated answers cite retrieved context; uncited answers are repaired with a citation-grounded fallback
+- Validates that generated answers cite retrieved context; uncited or invalidly cited answers abstain instead of being forced into a fallback
 - Applies configurable relevance thresholds before answer generation. If retrieved chunks are too weak, the API returns insufficient evidence instead of forcing a cited answer.
 
 ### Evaluation

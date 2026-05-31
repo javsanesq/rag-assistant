@@ -16,7 +16,10 @@ function escapeHtml(value) {
 }
 
 async function fetchJson(url, options) {
-  const response = await fetch(url, options);
+  const token = localStorage.getItem("ragAssistantApiToken");
+  const headers = { ...(options && options.headers ? options.headers : {}) };
+  if (token) headers["x-api-key"] = token;
+  const response = await fetch(url, { ...(options || {}), headers });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `Request failed: ${response.status}`);

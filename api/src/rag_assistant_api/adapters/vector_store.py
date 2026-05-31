@@ -41,6 +41,45 @@ class QdrantVectorStore:
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(size=self.dimensions, distance=Distance.COSINE),
             )
+            self._ensure_payload_indexes()
+            return
+        self._validate_collection_schema()
+        self._ensure_payload_indexes()
+
+    def _validate_collection_schema(self) -> None:
+        info = self.client.get_collection(self.collection_name)
+        vectors = info.config.params.vectors
+        vector_size = getattr(vectors, "size", None)
+        distance = getattr(vectors, "distance", None)
+        if isinstance(vectors, dict):
+            vector_size = next((getattr(item, "size", None) for item in vectors.values()), None)
+            distance = next((getattr(item, "distance", None) for item in vectors.values()), None)
+        if vector_size != self.dimensions:
+            raise RuntimeError(
+                f"Qdrant collection '{self.collection_name}' has vector size {vector_size}, "
+                f"but the configured embedding provider produces {self.dimensions}. "
+                "Use a new QDRANT_COLLECTION or reindex the collection."
+            )
+        if distance and str(distance).lower().split(".")[-1] != "cosine":
+            raise RuntimeError(
+                f"Qdrant collection '{self.collection_name}' uses distance {distance}; expected COSINE."
+            )
+
+    def _ensure_payload_indexes(self) -> None:
+        # Qdrant's in-memory mode used by tests may not support every index path; indexing is an optimization.
+        for field_name, schema in {
+            "document_id": "keyword",
+            "category": "keyword",
+            "document_timestamp": "integer",
+        }.items():
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=field_name,
+                    field_schema=schema,
+                )
+            except Exception:
+                pass
 
     def upsert_chunks(self, points: list[PointStruct]) -> None:
         if points:

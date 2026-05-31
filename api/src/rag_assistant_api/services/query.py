@@ -87,56 +87,42 @@ class QueryService:
 
 
 def _validate_or_repair_answer(answer: str, citation_map: dict[str, object]) -> tuple[str, dict]:
-    warnings: list[str] = []
     if not citation_map:
-        return (
-            "I do not have enough evidence in the indexed documents to answer that.",
-            {
-                "grounded": False,
-                "used_citation_ids": [],
-                "warnings": ["No citations were retrieved for this query."],
-            },
-        )
+        return _abstain("No citations were retrieved for this query.")
 
     cited_numbers = _extract_citation_numbers(answer)
     valid_numbers = sorted({number for number in cited_numbers if number in citation_map}, key=int)
     invalid_numbers = sorted({number for number in cited_numbers if number not in citation_map}, key=int)
     if invalid_numbers:
-        warnings.append(f"Removed unsupported citation markers: {', '.join(f'[{item}]' for item in invalid_numbers)}.")
-        answer = _strip_invalid_citations(answer, set(invalid_numbers))
+        invalid_markers = ", ".join(f"[{item}]" for item in invalid_numbers)
+        return _abstain(f"Model answer used unsupported citation markers: {invalid_markers}.")
 
     if valid_numbers:
         return (
             answer.strip(),
             {
-                "grounded": not invalid_numbers,
+                "grounded": True,
                 "used_citation_ids": [citation_map[number].chunk_id for number in valid_numbers],
-                "warnings": warnings,
+                "warnings": [],
             },
         )
 
-    fallback_number = "1"
-    fallback = citation_map[fallback_number]
-    warnings.append("Model answer did not cite retrieved context; returned a citation-grounded fallback.")
-    fallback_answer = f"Based on the retrieved context: {fallback.excerpt[:450].strip()} [{fallback_number}]"
+    return _abstain("Model answer did not cite retrieved context; abstained instead of returning an unsupported answer.")
+
+
+def _abstain(warning: str) -> tuple[str, dict]:
     return (
-        fallback_answer,
+        "I do not have enough evidence in the indexed documents to answer that.",
         {
-            "grounded": True,
-            "used_citation_ids": [fallback.chunk_id],
-            "warnings": warnings,
+            "grounded": False,
+            "used_citation_ids": [],
+            "warnings": [warning],
         },
     )
 
 
 def _extract_citation_numbers(answer: str) -> list[str]:
     return re.findall(r"\[(\d+)\]", answer)
-
-
-def _strip_invalid_citations(answer: str, invalid_numbers: set[str]) -> str:
-    for number in invalid_numbers:
-        answer = re.sub(rf"\[{re.escape(number)}\]", "", answer)
-    return re.sub(r"\s+", " ", answer).strip()
 
 
 def _filter_relevant_chunks(chunks: list[RetrievedChunk], settings: Settings, question: str = "") -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:

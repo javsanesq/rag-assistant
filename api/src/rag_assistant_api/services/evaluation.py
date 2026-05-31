@@ -120,6 +120,20 @@ class EvaluationService:
             summary = {
                 "dataset_name": request.dataset_name,
                 "examples": len(results),
+                "runtime": {
+                    "embed_provider": self.settings.embed_provider,
+                    "embed_model": self.settings.embed_model,
+                    "llm_provider": self.settings.llm_provider,
+                    "llm_model": self.settings.llm_model,
+                    "qdrant_vector_size": self.settings.qdrant_vector_size,
+                    "top_k": request.top_k or self.settings.top_k,
+                    "relevance": {
+                        "min_lexical_score": self.settings.relevance_min_lexical_score,
+                        "min_dense_score": self.settings.relevance_min_dense_score,
+                        "min_final_score": self.settings.relevance_min_final_score,
+                        "min_meaningful_terms": self.settings.relevance_min_meaningful_terms,
+                    },
+                },
                 "precision_at_k": round(sum(precision_scores) / max(1, len(precision_scores)), 4),
                 "hit_rate": round(sum(hit_rates) / max(1, len(hit_rates)), 4),
                 "recall_at_k": round(sum(recall_scores) / max(1, len(recall_scores)), 4),

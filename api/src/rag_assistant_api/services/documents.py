@@ -137,13 +137,16 @@ class DocumentService:
 
     def delete_document(self, document_id: str) -> bool:
         with self.session_factory() as session:
+            if not session.get(DocumentRecord, document_id):
+                return False
+        self.vector_store.delete_document(document_id)
+        with self.session_factory() as session:
             record = session.get(DocumentRecord, document_id)
             if not record:
                 return False
             session.execute(delete(ChunkRecord).where(ChunkRecord.document_id == document_id))
             session.delete(record)
             session.commit()
-        self.vector_store.delete_document(document_id)
         return True
 
     def expand_urls(self, url: str | None, urls: list[str], sitemap_url: str | None) -> list[str]:
@@ -184,59 +187,73 @@ class DocumentService:
             session.add(record)
             session.commit()
 
-        effective_chunking = validate_chunking(chunking, self.settings.max_chunk_size)
-        chunks = chunk_text(parsed.text, effective_chunking)
-        embeddings = self.embedding_provider.embed_texts([chunk.text for chunk in chunks]) if chunks else []
-        points = []
-        chunk_records = []
-        for chunk, vector in zip(chunks, embeddings):
-            lexical_terms = _tokenize(chunk.text)
-            points.append(
-                PointStruct(
-                    id=chunk.chunk_id,
-                    vector=vector,
-                    payload={
-                        "document_id": document_id,
-                        "title": parsed.title,
-                        "source_uri": parsed.source_uri,
-                        "source_type": parsed.source_type,
-                        "category": category,
-                        "document_date": document_date.isoformat() if document_date else None,
-                        "document_timestamp": to_timestamp(document_date),
-                        "chunk_index": chunk.chunk_index,
-                        "chunk_text": chunk.text,
-                        "lexical_terms": lexical_terms,
-                        "metadata": serialized_metadata,
-                    },
+        try:
+            effective_chunking = validate_chunking(chunking, self.settings.max_chunk_size)
+            chunks = chunk_text(parsed.text, effective_chunking)
+            embeddings = self.embedding_provider.embed_texts([chunk.text for chunk in chunks]) if chunks else []
+            points = []
+            chunk_records = []
+            for chunk, vector in zip(chunks, embeddings):
+                lexical_terms = _tokenize(chunk.text)
+                chunk_hash = hashlib.sha256(chunk.text.encode("utf-8")).hexdigest()
+                points.append(
+                    PointStruct(
+                        id=chunk.chunk_id,
+                        vector=vector,
+                        payload={
+                            "document_id": document_id,
+                            "title": parsed.title,
+                            "source_uri": parsed.source_uri,
+                            "source_type": parsed.source_type,
+                            "category": category,
+                            "document_date": document_date.isoformat() if document_date else None,
+                            "document_timestamp": to_timestamp(document_date),
+                            "chunk_index": chunk.chunk_index,
+                            "chunk_text": chunk.text,
+                            "chunk_hash": chunk_hash,
+                            "source_hash": source_hash,
+                            "lexical_terms": lexical_terms,
+                            "metadata": serialized_metadata,
+                        },
+                    )
                 )
-            )
-            chunk_records.append(
-                ChunkRecord(
-                    chunk_id=chunk.chunk_id,
-                    document_id=document_id,
-                    title=parsed.title,
-                    source_uri=parsed.source_uri,
-                    source_type=parsed.source_type,
-                    category=category,
-                    document_date=document_date,
-                    document_timestamp=to_timestamp(document_date),
-                    chunk_index=chunk.chunk_index,
-                    chunk_text=chunk.text,
-                    lexical_terms_json=json.dumps(lexical_terms),
+                chunk_records.append(
+                    ChunkRecord(
+                        chunk_id=chunk.chunk_id,
+                        document_id=document_id,
+                        title=parsed.title,
+                        source_uri=parsed.source_uri,
+                        source_type=parsed.source_type,
+                        category=category,
+                        document_date=document_date,
+                        document_timestamp=to_timestamp(document_date),
+                        chunk_index=chunk.chunk_index,
+                        chunk_text=chunk.text,
+                        lexical_terms_json=json.dumps(lexical_terms),
+                    )
                 )
-            )
-        self.vector_store.upsert_chunks(points)
+            self.vector_store.upsert_chunks(points)
 
-        with self.session_factory() as session:
-            session.execute(delete(ChunkRecord).where(ChunkRecord.document_id == document_id))
-            session.add_all(chunk_records)
-            record = session.get(DocumentRecord, document_id)
-            if record:
-                record.status = "ready"
-                record.chunk_count = len(chunks)
-                record.summary = chunks[0].text[:300] if chunks else None
-                session.add(record)
-                session.commit()
+            with self.session_factory() as session:
+                session.execute(delete(ChunkRecord).where(ChunkRecord.document_id == document_id))
+                session.add_all(chunk_records)
+                record = session.get(DocumentRecord, document_id)
+                if record:
+                    record.status = "ready"
+                    record.chunk_count = len(chunks)
+                    record.summary = chunks[0].text[:300] if chunks else None
+                    session.add(record)
+                    session.commit()
+        except Exception:
+            self.vector_store.delete_document(document_id)
+            with self.session_factory() as session:
+                record = session.get(DocumentRecord, document_id)
+                if record:
+                    record.status = "failed"
+                    record.summary = "Ingestion failed before document became queryable."
+                    session.add(record)
+                    session.commit()
+            raise
 
         logger.info(
             "Document ingested",

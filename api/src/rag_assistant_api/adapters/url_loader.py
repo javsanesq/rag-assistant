@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree
 
 import httpx
@@ -10,6 +10,9 @@ from bs4 import BeautifulSoup
 
 from rag_assistant_api.adapters.parsers import ParsedContent
 from rag_assistant_api.core.config import Settings
+
+MAX_URL_REDIRECTS = 5
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
 def expand_urls(url: str | None, urls: list[str], sitemap_url: str | None, settings: Settings) -> list[str]:
@@ -54,19 +57,36 @@ def _fetch_sitemap_urls(sitemap_url: str, settings: Settings) -> list[str]:
 
 
 def _bounded_get(url: str, settings: Settings) -> str:
-    with httpx.stream("GET", url, timeout=20.0, follow_redirects=True) as response:
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "")
-        if not any(item in content_type for item in ("text/html", "text/xml", "application/xml", "application/xhtml+xml")):
-            raise ValueError(f"Unsupported URL content type: {content_type or 'unknown'}")
-        chunks = []
-        total = 0
-        for chunk in response.iter_bytes():
-            total += len(chunk)
-            if total > settings.max_url_bytes:
-                raise ValueError("URL response exceeds MAX_URL_BYTES.")
-            chunks.append(chunk)
-    return b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+    current_url = url
+    redirects_followed = 0
+
+    while True:
+        _validate_url(current_url, settings)
+        with httpx.stream("GET", current_url, timeout=20.0, follow_redirects=False) as response:
+            if response.status_code in _REDIRECT_STATUSES:
+                if redirects_followed >= MAX_URL_REDIRECTS:
+                    raise ValueError(f"URL redirect limit exceeded: {MAX_URL_REDIRECTS}")
+                location = response.headers.get("location")
+                if not location:
+                    raise ValueError("URL redirect response is missing a Location header.")
+                next_url = urljoin(str(response.url), location)
+                _validate_url(next_url, settings)
+                current_url = next_url
+                redirects_followed += 1
+                continue
+
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if not any(item in content_type for item in ("text/html", "text/xml", "application/xml", "application/xhtml+xml")):
+                raise ValueError(f"Unsupported URL content type: {content_type or 'unknown'}")
+            chunks = []
+            total = 0
+            for chunk in response.iter_bytes():
+                total += len(chunk)
+                if total > settings.max_url_bytes:
+                    raise ValueError("URL response exceeds MAX_URL_BYTES.")
+                chunks.append(chunk)
+            return b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
 
 
 def _validate_url(url: str, settings: Settings) -> None:
