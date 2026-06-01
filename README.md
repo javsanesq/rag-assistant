@@ -14,7 +14,8 @@ Production-grade RAG assistant built with FastAPI, Qdrant, durable SQL-backed jo
 - Citation-rich answers with applied-filter telemetry
 - Citation-grounded answer validation with used chunk IDs and grounding warnings
 - Retrieval relevance gating that abstains when retrieved chunks are too weak to support the question
-- Offline evaluation with `precision@k`, `hit_rate@k`, and a faithfulness rubric
+- Optional reranking and answerability checks with `none`, `mock`, and OpenAI providers
+- Offline evaluation with document-level metrics, chunk-level metrics, answer-content checks, tag summaries, and a faithfulness rubric
 - Structured logging, durable worker jobs, tests, Docker, and a strong portfolio UI
 
 ## Stack
@@ -24,6 +25,7 @@ Production-grade RAG assistant built with FastAPI, Qdrant, durable SQL-backed jo
 - Parsing: `pypdf`, `python-docx`, `beautifulsoup4`, `PyYAML`
 - Embeddings: mock for smoke tests, OpenAI for production, optional sentence-transformers for local models
 - LLM: mock, OpenAI, or Ollama
+- Reranker: none, mock heuristic, or OpenAI answerability reranker
 - UI: static HTML/CSS/JS behind nginx
 
 ## Quickstart
@@ -77,6 +79,7 @@ Important defaults:
 
 - `EMBED_PROVIDER=mock` and `LLM_PROVIDER=mock` keep Docker smoke tests deterministic and usable without paid API keys.
 - Set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=...` for hosted answer generation.
+- Set `RERANKER_PROVIDER=openai` and `OPENAI_API_KEY=...` for hosted reranking and answerability checks.
 - Set `DATABASE_URL=postgresql+psycopg://...` when deploying against Postgres instead of local SQLite.
 - Relevance thresholds are configurable through `RELEVANCE_MIN_*` environment variables.
 - `/api/v1/*` routes fail closed when `API_AUTH_TOKEN` is empty. Set a strong token before exposing the API; clients may send it as `x-api-key` or `Authorization: Bearer ...`.
@@ -130,6 +133,7 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/rag_assistant mak
 - Optional `document_ids`, `category`, `date_from`, `date_to`
 - Returns `answer`, `citations`, `applied_filters`, and timing metadata
 - Supports `retrieval_mode`, `alpha`, and `include_trace` for hybrid dense/lexical retrieval diagnostics
+- Supports optional `rerank` and `answerability_check` for reranker-backed candidate selection and no-answer decisions
 - Hybrid mode independently retrieves lexical candidates, so exact-match terms can rescue chunks missed by dense search
 - Validates that generated answers cite retrieved context; uncited or invalidly cited answers abstain instead of being forced into a fallback
 - Applies configurable relevance thresholds before answer generation. If retrieved chunks are too weak, the API returns insufficient evidence instead of forcing a cited answer.
@@ -142,6 +146,8 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/rag_assistant mak
 - Computes retrieval metrics and a faithfulness rubric
 - Stores per-example rationale and aggregate summaries
 - Reports `precision@k`, `hit_rate@k`, `recall@k`, `mrr`, faithfulness, abstention accuracy, unsupported-answer rate, citation relevance, and per-filter summaries
+- Supports richer benchmark rows with `expected_chunk_ids`, `expected_answer_contains`, `tags`, `difficulty`, and `answerability_reason`
+- Reports chunk-level `precision@k`, hit rate, recall, MRR, answer-content match rate, and per-tag summaries
 
 ### Jobs
 
@@ -183,13 +189,14 @@ API_AUTH_TOKEN=your-token START_STACK=1 make smoke-e2e
 
 ## Benchmark
 
-Run the OpenAI-backed benchmark to compare dense retrieval, SQLite FTS5 BM25 hybrid retrieval, and OpenAI reranking:
+Run the OpenAI-backed benchmark to compare dense retrieval, SQLite FTS5 BM25 hybrid retrieval, production relevance thresholds, and OpenAI reranking:
 
 ```bash
 OPENAI_API_KEY=... make benchmark
 ```
 
 The benchmark indexes `samples/benchmark`, evaluates `evals/datasets/benchmark_eval.jsonl`, writes the committed report to `docs/benchmark-report.md`, and stores raw local results under `output/evals/benchmark-results.json`.
+The current report includes exact-match, semantic, lexical, filter, date-conflict, prompt-injection, multi-hop, near-miss, and no-answer cases.
 
 ## Repository layout
 

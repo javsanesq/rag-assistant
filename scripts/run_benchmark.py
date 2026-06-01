@@ -8,17 +8,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from openai import OpenAI
-
 from rag_assistant_api.adapters.embeddings import build_embedding_provider
 from rag_assistant_api.adapters.lexical_store import SQLLexicalStore
 from rag_assistant_api.adapters.llm import MockLLMProvider
 from rag_assistant_api.adapters.parsers import parse_file_bytes
+from rag_assistant_api.adapters.reranker import OpenAIRerankerProvider
 from rag_assistant_api.adapters.vector_store import RetrievedChunk, QdrantVectorStore
 from rag_assistant_api.core.config import Settings
 from rag_assistant_api.core.db import build_engine, build_session_factory, init_db
 from rag_assistant_api.domain.schemas import ChunkingConfig, QueryRequest
 from rag_assistant_api.services.documents import DocumentService
+from rag_assistant_api.services.eval_metrics import answer_contains_expected, mean, score_ranked_ids
 from rag_assistant_api.services.evaluation import EvaluationService
 from rag_assistant_api.services.jobs import JobService
 from rag_assistant_api.services.query import _filter_relevant_chunks
@@ -30,8 +30,15 @@ class BenchmarkCase:
     id: str
     question: str
     expected_document_ids: list[str]
+    expected_chunk_ids: list[str]
+    expected_answer_contains: list[str]
+    document_ids: list[str]
     category: str | None
+    date_from: str | None
+    date_to: str | None
     should_answer: bool
+    tags: list[str]
+    difficulty: str | None
 
 
 def main() -> None:
@@ -56,6 +63,7 @@ def main() -> None:
             embed_provider="openai",
             embed_model="text-embedding-3-small",
             llm_provider="mock",
+            reranker_provider="openai",
             eval_dataset_dir=repo_root / "evals" / "datasets",
         )
         if not settings.openai_api_key:
@@ -120,19 +128,27 @@ def _load_cases(path: Path) -> list[BenchmarkCase]:
             id=row["id"],
             question=row["question"],
             expected_document_ids=row.get("expected_document_ids", []),
+            expected_chunk_ids=row.get("expected_chunk_ids", []),
+            expected_answer_contains=_as_list(row.get("expected_answer_contains", [])),
+            document_ids=row.get("document_ids", []),
             category=row.get("category"),
+            date_from=row.get("date_from"),
+            date_to=row.get("date_to"),
             should_answer=row.get("should_answer", True),
+            tags=row.get("tags", []) or ["untagged"],
+            difficulty=row.get("difficulty"),
         )
         for row in rows
     ]
 
 
 def _run_cases(runtime, cases: list[BenchmarkCase], top_k: int, use_reranker: bool) -> dict:
-    openai_client = OpenAI(api_key=runtime.settings.openai_api_key) if use_reranker else None
+    reranker = OpenAIRerankerProvider(runtime.settings) if use_reranker else None
     modes = {
-        "dense_only": {"retrieval_mode": "dense", "alpha": 1.0, "rerank": False},
-        "hybrid_bm25": {"retrieval_mode": "hybrid", "alpha": 0.65, "rerank": False},
-        "hybrid_bm25_reranked": {"retrieval_mode": "hybrid", "alpha": 0.65, "rerank": True},
+        "dense_only": {"retrieval_mode": "dense", "alpha": 1.0, "threshold": False, "rerank": False},
+        "hybrid_bm25": {"retrieval_mode": "hybrid", "alpha": 0.65, "threshold": False, "rerank": False},
+        "hybrid_bm25_thresholded": {"retrieval_mode": "hybrid", "alpha": 0.65, "threshold": True, "rerank": False},
+        "hybrid_bm25_reranked": {"retrieval_mode": "hybrid", "alpha": 0.65, "threshold": True, "rerank": True},
     }
     output = {
         "config": {
@@ -140,7 +156,7 @@ def _run_cases(runtime, cases: list[BenchmarkCase], top_k: int, use_reranker: bo
             "embed_model": runtime.settings.embed_model,
             "qdrant_vector_size": runtime.settings.qdrant_vector_size,
             "top_k": top_k,
-            "reranker": runtime.settings.llm_model,
+            "reranker": runtime.settings.reranker_model,
             "hybrid_fusion": "weighted reciprocal rank fusion",
             "hybrid_alpha": modes["hybrid_bm25"]["alpha"],
             "lexical_backend": "SQLite FTS5 BM25 with token-overlap fallback",
@@ -152,16 +168,22 @@ def _run_cases(runtime, cases: list[BenchmarkCase], top_k: int, use_reranker: bo
         for case in cases:
             request = QueryRequest(
                 question=case.question,
+                document_ids=case.document_ids,
                 category=case.category,
+                date_from=case.date_from,
+                date_to=case.date_to,
                 top_k=top_k,
                 retrieval_mode=mode_config["retrieval_mode"],
                 alpha=mode_config["alpha"],
             )
             retrieved = runtime.retrieval_service.retrieve(request)
-            relevant, _ = _filter_relevant_chunks(retrieved, runtime.settings, case.question)
-            selected = relevant
-            if mode_config["rerank"] and openai_client:
-                selected = _rerank(openai_client, runtime.settings.llm_model, case.question, selected)[:top_k]
+            selected = retrieved
+            if mode_config["threshold"]:
+                selected, _ = _filter_relevant_chunks(retrieved, runtime.settings, case.question)
+            if mode_config["rerank"] and reranker:
+                decision = reranker.rerank(case.question, selected)
+                selected = decision.selected_chunks if decision.answerable else []
+            selected = selected[:top_k]
             examples.append(_score_case(case, selected, top_k))
         output["modes"][mode_name] = {
             "summary": _summarize_examples(examples),
@@ -170,55 +192,40 @@ def _run_cases(runtime, cases: list[BenchmarkCase], top_k: int, use_reranker: bo
     return output
 
 
-def _rerank(client: OpenAI, model: str, question: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
-    if not chunks:
-        return chunks
-    chunk_payload = [
-        {"chunk_id": chunk.chunk_id, "document_id": chunk.document_id, "excerpt": chunk.excerpt[:900]}
-        for chunk in chunks
-    ]
-    prompt = (
-        "Decide whether these retrieved chunks contain enough evidence to answer the question. "
-        "If no chunk directly answers the question, return {\"answerable\": false, \"chunk_ids\": []}. "
-        "Otherwise rank the chunks by support quality and return only JSON: "
-        "{\"answerable\": true, \"chunk_ids\": [\"...\"]}.\n\n"
-        f"Question: {question}\nChunks: {json.dumps(chunk_payload)}"
-    )
-    response = client.chat.completions.create(
-        model=model,
-        temperature=0,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    content = response.choices[0].message.content or "{}"
-    try:
-        parsed = json.loads(content)
-        if parsed.get("answerable") is False:
-            return []
-        ranked_ids = parsed.get("chunk_ids", [])
-    except json.JSONDecodeError:
-        ranked_ids = []
-    by_id = {chunk.chunk_id: chunk for chunk in chunks}
-    ranked = [by_id[chunk_id] for chunk_id in ranked_ids if chunk_id in by_id]
-    ranked.extend(chunk for chunk in chunks if chunk.chunk_id not in {item.chunk_id for item in ranked})
-    return ranked
-
-
 def _score_case(case: BenchmarkCase, chunks: list[RetrievedChunk], top_k: int) -> dict:
     actual_ids = [chunk.document_id for chunk in chunks]
+    actual_chunk_ids = [chunk.chunk_id for chunk in chunks]
     expected = set(case.expected_document_ids)
     hits = [document_id for document_id in actual_ids if document_id in expected]
-    first_rank = next((index + 1 for index, document_id in enumerate(actual_ids) if document_id in expected), None)
     abstained = len(chunks) == 0
+    document_scores = score_ranked_ids(case.expected_document_ids, actual_ids, top_k, case.should_answer)
+    chunk_scores = (
+        score_ranked_ids(case.expected_chunk_ids, actual_chunk_ids, top_k, case.should_answer)
+        if case.expected_chunk_ids
+        else document_scores
+    )
+    answer_contains = answer_contains_expected(" ".join(chunk.excerpt for chunk in chunks), case.expected_answer_contains)
+    if not case.should_answer:
+        answer_contains = abstained
     return {
         "id": case.id,
         "should_answer": case.should_answer,
+        "tags": case.tags,
+        "difficulty": case.difficulty,
         "expected_document_ids": case.expected_document_ids,
+        "expected_chunk_ids": case.expected_chunk_ids,
         "actual_document_ids": actual_ids,
+        "actual_chunk_ids": actual_chunk_ids,
         "top_chunk_ids": [chunk.chunk_id for chunk in chunks],
-        "precision_at_k": len(hits) / max(1, top_k) if case.should_answer else 1.0 if abstained else 0.0,
-        "hit_rate": 1.0 if hits else 0.0 if case.should_answer else 1.0 if abstained else 0.0,
-        "recall_at_k": len(set(hits)) / max(1, len(expected)) if case.should_answer else 1.0 if abstained else 0.0,
-        "mrr": 1 / first_rank if first_rank else 0.0 if case.should_answer else 1.0 if abstained else 0.0,
+        "precision_at_k": document_scores["precision_at_k"],
+        "hit_rate": document_scores["hit_rate"],
+        "recall_at_k": document_scores["recall_at_k"],
+        "mrr": document_scores["mrr"],
+        "chunk_precision_at_k": chunk_scores["precision_at_k"],
+        "chunk_hit_rate": chunk_scores["hit_rate"],
+        "chunk_recall_at_k": chunk_scores["recall_at_k"],
+        "chunk_mrr": chunk_scores["mrr"],
+        "answer_contains": bool(answer_contains),
         "abstained": abstained,
     }
 
@@ -230,24 +237,41 @@ def _summarize_examples(examples: list[dict]) -> dict:
         "examples": len(examples),
         "answerable_examples": len(answerable),
         "no_answer_examples": len(no_answer),
-        "precision_at_k": _mean(item["precision_at_k"] for item in answerable),
-        "hit_rate": _mean(item["hit_rate"] for item in answerable),
-        "recall_at_k": _mean(item["recall_at_k"] for item in answerable),
-        "mrr": _mean(item["mrr"] for item in answerable),
-        "abstention_accuracy": _mean(1.0 if item["abstained"] else 0.0 for item in no_answer),
+        "precision_at_k": mean(item["precision_at_k"] for item in answerable),
+        "hit_rate": mean(item["hit_rate"] for item in answerable),
+        "recall_at_k": mean(item["recall_at_k"] for item in answerable),
+        "mrr": mean(item["mrr"] for item in answerable),
+        "chunk_precision_at_k": mean(item["chunk_precision_at_k"] for item in answerable),
+        "chunk_hit_rate": mean(item["chunk_hit_rate"] for item in answerable),
+        "chunk_recall_at_k": mean(item["chunk_recall_at_k"] for item in answerable),
+        "chunk_mrr": mean(item["chunk_mrr"] for item in answerable),
+        "answer_contains_rate": mean(1.0 if item["answer_contains"] else 0.0 for item in examples),
+        "abstention_accuracy": mean(1.0 if item["abstained"] else 0.0 for item in no_answer),
+        "by_tag": _summarize_by_tag(examples),
     }
 
 
-def _mean(values) -> float:
-    values = list(values)
-    if not values:
-        return 0.0
-    return round(sum(values) / len(values), 4)
+def _summarize_by_tag(examples: list[dict]) -> dict:
+    by_tag: dict[str, list[dict]] = {}
+    for item in examples:
+        for tag in item["tags"]:
+            by_tag.setdefault(tag, []).append(item)
+    return {
+        tag: {
+            "examples": len(items),
+            "document_hit_rate": mean(item["hit_rate"] for item in items),
+            "chunk_hit_rate": mean(item["chunk_hit_rate"] for item in items),
+            "answer_contains_rate": mean(1.0 if item["answer_contains"] else 0.0 for item in items),
+            "abstention_accuracy": mean(1.0 if item["abstained"] else 0.0 for item in items if not item["should_answer"]),
+        }
+        for tag, items in sorted(by_tag.items())
+    }
 
 
 def _render_report(results: dict, cases: list[BenchmarkCase], top_k: int) -> str:
     dense_summary = results["modes"]["dense_only"]["summary"]
     hybrid_summary = results["modes"]["hybrid_bm25"]["summary"]
+    thresholded_summary = results["modes"]["hybrid_bm25_thresholded"]["summary"]
     reranked_summary = results["modes"]["hybrid_bm25_reranked"]["summary"]
     lines = [
         "# RAG Benchmark Report",
@@ -266,15 +290,31 @@ def _render_report(results: dict, cases: list[BenchmarkCase], top_k: int) -> str
         "",
         "## Results",
         "",
-        "| Mode | Precision@K | Hit Rate | Recall@K | MRR | Abstention Accuracy |",
+        "| Mode | Doc Hit | Chunk Hit | Chunk MRR | Answer Contains | Abstention Accuracy |",
         "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for mode_name, payload in results["modes"].items():
         summary = payload["summary"]
         lines.append(
-            f"| {mode_name} | {summary['precision_at_k']:.4f} | {summary['hit_rate']:.4f} | "
-            f"{summary['recall_at_k']:.4f} | {summary['mrr']:.4f} | {summary['abstention_accuracy']:.4f} |"
+            f"| {mode_name} | {summary['hit_rate']:.4f} | {summary['chunk_hit_rate']:.4f} | "
+            f"{summary['chunk_mrr']:.4f} | {summary['answer_contains_rate']:.4f} | {summary['abstention_accuracy']:.4f} |"
         )
+    lines.extend(
+        [
+            "",
+            "## Results By Tag",
+            "",
+            "| Mode | Tag | Examples | Doc Hit | Chunk Hit | Answer Contains | Abstention |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode_name, payload in results["modes"].items():
+        for tag, stats in payload["summary"]["by_tag"].items():
+            lines.append(
+                f"| {mode_name} | {tag} | {stats['examples']} | {stats['document_hit_rate']:.4f} | "
+                f"{stats['chunk_hit_rate']:.4f} | {stats['answer_contains_rate']:.4f} | "
+                f"{stats['abstention_accuracy']:.4f} |"
+            )
     lines.extend(
         [
             "",
@@ -282,25 +322,27 @@ def _render_report(results: dict, cases: list[BenchmarkCase], top_k: int) -> str
             "",
             f"- `dense_only` is the semantic-vector baseline. On this benchmark it already retrieved the expected document for every answerable example (hit rate {dense_summary['hit_rate']:.4f}).",
             f"- `hybrid_bm25` adds SQLite FTS5 BM25 lexical retrieval and weighted Reciprocal Rank Fusion. On this corpus it matched dense retrieval's hit rate ({hybrid_summary['hit_rate']:.4f}), which means the answerable questions were not hard enough to expose a BM25 recall gain.",
-            f"- Hybrid retrieval without reranking can over-retrieve lexically related but insufficient chunks on unsupported questions; its abstention accuracy was {hybrid_summary['abstention_accuracy']:.4f}.",
+            f"- `hybrid_bm25_thresholded` applies the production relevance gate before answer generation; abstention accuracy was {thresholded_summary['abstention_accuracy']:.4f}.",
             f"- `hybrid_bm25_reranked` applies an OpenAI answerability reranker. The main measured gain was no-answer behavior: abstention accuracy moved from {dense_summary['abstention_accuracy']:.4f} to {reranked_summary['abstention_accuracy']:.4f}.",
-            f"- Precision@K is capped at {1 / top_k:.4f} for this dataset because each answerable question has one expected document and the benchmark retrieves K={top_k} candidates.",
-            "- The takeaway is that OpenAI embeddings are already strong on clean single-hop policy questions; the reranker adds value by rejecting retrieved-but-insufficient context.",
+            "- Chunk-level metrics are stricter than document-level metrics because finding the right document is not enough; the system must retrieve the exact supporting passage.",
+            "- The takeaway is that OpenAI embeddings and BM25 are strong on clean factual questions, while reranking/answerability is the control that rejects plausible but insufficient context.",
             "",
             "## Per-Example Results",
             "",
-            "| ID | Expected | Dense | Hybrid BM25 | Reranked |",
-            "| --- | --- | --- | --- | --- |",
+        "| ID | Tags | Expected | Dense | Hybrid BM25 | Thresholded | Reranked |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     dense = {item["id"]: item for item in results["modes"]["dense_only"]["examples"]}
     hybrid = {item["id"]: item for item in results["modes"]["hybrid_bm25"]["examples"]}
+    thresholded = {item["id"]: item for item in results["modes"]["hybrid_bm25_thresholded"]["examples"]}
     reranked = {item["id"]: item for item in results["modes"]["hybrid_bm25_reranked"]["examples"]}
     for case in cases:
         lines.append(
-            f"| {case.id} | {', '.join(case.expected_document_ids) or 'ABSTAIN'} | "
+            f"| {case.id} | {', '.join(case.tags)} | {', '.join(case.expected_document_ids) or 'ABSTAIN'} | "
             f"{', '.join(dense[case.id]['actual_document_ids'][:3]) or 'ABSTAIN'} | "
             f"{', '.join(hybrid[case.id]['actual_document_ids'][:3]) or 'ABSTAIN'} | "
+            f"{', '.join(thresholded[case.id]['actual_document_ids'][:3]) or 'ABSTAIN'} | "
             f"{', '.join(reranked[case.id]['actual_document_ids'][:3]) or 'ABSTAIN'} |"
         )
     lines.extend(
@@ -309,11 +351,20 @@ def _render_report(results: dict, cases: list[BenchmarkCase], top_k: int) -> str
             "## Caveats",
             "",
             "This is a controlled synthetic benchmark, not a replacement for domain-specific production evaluation. "
-            "The next step is to add real company documents, expected chunk IDs, answer-quality rubrics, and prompt-injection cases.",
+            "It proves the evaluation loop and exposes classes of failure, but it does not certify performance on a real company's documents. "
+            "The next step is to run the same harness on real PDFs, policies, tickets, or knowledge-base exports with human-reviewed expected chunks.",
             "",
         ]
     )
     return "\n".join(lines)
+
+
+def _as_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return list(value)
 
 
 if __name__ == "__main__":
