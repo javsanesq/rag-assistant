@@ -74,7 +74,13 @@ def test_file_ingest_query_and_eval_flow(client):
 
     query_response = client.post(
         "/api/v1/query",
-        json={"question": "What is the refund window for annual plans?", "category": "policy"},
+        json={
+            "question": "What is the refund window for annual plans?",
+            "category": "policy",
+            "rerank": True,
+            "answerability_check": True,
+            "include_trace": True,
+        },
     )
     assert query_response.status_code == 200
     query_payload = query_response.json()
@@ -84,6 +90,8 @@ def test_file_ingest_query_and_eval_flow(client):
     assert query_payload["used_citation_ids"] == [query_payload["citations"][0]["chunk_id"]]
     assert "[1]" in query_payload["answer"]
     assert query_payload["citations"][0]["final_score"] >= query_payload["citations"][0]["lexical_score"] * 0
+    assert query_payload["trace"]["reranker_provider"] == "mock"
+    assert query_payload["trace"]["answerable"] is True
 
     eval_response = client.post("/api/v1/evals/runs", json={"dataset_name": "portfolio_eval.jsonl"})
     assert eval_response.status_code == 200
@@ -94,6 +102,8 @@ def test_file_ingest_query_and_eval_flow(client):
     assert run_detail.status_code == 200
     assert run_detail.json()["status"] == "completed"
     assert "mrr" in run_detail.json()["result"]["summary"]
+    assert "chunk_mrr" in run_detail.json()["result"]["summary"]
+    assert "by_tag" in run_detail.json()["result"]["summary"]
 
     delete_response = client.delete("/api/v1/documents/company-handbook")
     assert delete_response.status_code == 200

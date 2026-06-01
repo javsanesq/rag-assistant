@@ -243,6 +243,21 @@ body::before {
 .query-filters {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.check-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding-bottom: 9px;
+}
+
+.check-field input {
+  accent-color: var(--accent);
 }
 
 .query-input-row {

@@ -191,7 +191,7 @@ function renderEvals() {
     .join("");
 }
 
-function appendMessage(role, body, citations = [], metrics = null, grounding = null) {
+function appendMessage(role, body, citations = [], metrics = null, grounding = null, trace = null) {
   const log = document.getElementById("chat-log");
 
   const emptyHint = document.getElementById("empty-hint");
@@ -218,6 +218,15 @@ function appendMessage(role, body, citations = [], metrics = null, grounding = n
     ${
       grounding && grounding.warnings.length
         ? `<div class="message-warning">${grounding.warnings.map(escapeHtml).join(" ")}</div>`
+        : ""
+    }
+    ${
+      trace && trace.reranker_provider
+        ? `<div class="message-metrics">
+            reranker ${escapeHtml(trace.reranker_provider)} / ${escapeHtml(trace.reranker_model)}
+            · answerable ${escapeHtml(trace.answerable)}
+            ${trace.reranker_rationale ? ` · ${escapeHtml(trace.reranker_rationale)}` : ""}
+          </div>`
         : ""
     }
     ${
@@ -306,6 +315,8 @@ document.getElementById("query-form").addEventListener("submit", async (event) =
         .value.split(",")
         .map((item) => item.trim())
         .filter(Boolean),
+      rerank: document.getElementById("rerank-toggle").checked,
+      answerability_check: document.getElementById("answerability-toggle").checked,
       include_trace: true,
     }),
   });
@@ -313,7 +324,7 @@ document.getElementById("query-form").addEventListener("submit", async (event) =
     grounded: response.grounded,
     usedCitationIds: response.used_citation_ids || [],
     warnings: response.warnings || [],
-  });
+  }, response.trace);
   if (!response.citations.length) {
     renderStatus("Query returned no citations", false);
   }

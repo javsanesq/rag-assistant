@@ -4,6 +4,7 @@ import re
 import time
 
 from rag_assistant_api.adapters.llm import LLMProvider
+from rag_assistant_api.adapters.reranker import RerankDecision, RerankerProvider
 from rag_assistant_api.adapters.vector_store import RetrievedChunk
 from rag_assistant_api.core.config import Settings
 from rag_assistant_api.domain.schemas import Citation, QueryRequest, QueryResponse
@@ -11,17 +12,42 @@ from rag_assistant_api.services.retrieval import RetrievalService
 
 
 class QueryService:
-    def __init__(self, retrieval_service: RetrievalService, llm_provider: LLMProvider, settings: Settings) -> None:
+    def __init__(
+        self,
+        retrieval_service: RetrievalService,
+        llm_provider: LLMProvider,
+        reranker_provider: RerankerProvider,
+        settings: Settings,
+    ) -> None:
         self.retrieval_service = retrieval_service
         self.llm_provider = llm_provider
+        self.reranker_provider = reranker_provider
         self.settings = settings
 
     def answer_question(self, request: QueryRequest) -> QueryResponse:
         started = time.perf_counter()
         retrieved = self.retrieval_service.retrieve(request)
         relevant, rejected = _filter_relevant_chunks(retrieved, self.settings, request.question)
+        rerank_decision = None
+        if relevant and (request.rerank or request.answerability_check):
+            rerank_decision = self.reranker_provider.rerank(request.question, relevant)
+            if request.answerability_check and not rerank_decision.answerable:
+                return self._insufficient_evidence_response(
+                    request,
+                    elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+                    rejected=rejected,
+                    rerank_decision=rerank_decision,
+                    warning=rerank_decision.rationale,
+                )
+            if request.rerank:
+                relevant = rerank_decision.selected_chunks
         if not relevant:
-            return self._insufficient_evidence_response(request, elapsed_ms=round((time.perf_counter() - started) * 1000, 2), rejected=rejected)
+            return self._insufficient_evidence_response(
+                request,
+                elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+                rejected=rejected,
+                rerank_decision=rerank_decision,
+            )
 
         context_blocks = [
             (
@@ -41,6 +67,7 @@ class QueryService:
                 "alpha": request.alpha,
                 "selected_chunks": [_trace_chunk(item, relevant=True) for item in relevant],
                 "rejected_chunks": [_trace_chunk(item, relevant=False) for item in rejected],
+                **_rerank_trace(rerank_decision, relevant),
             }
         return QueryResponse(
             answer=answer,
@@ -59,7 +86,14 @@ class QueryService:
             warnings=grounding["warnings"],
         )
 
-    def _insufficient_evidence_response(self, request: QueryRequest, elapsed_ms: float, rejected: list[RetrievedChunk]) -> QueryResponse:
+    def _insufficient_evidence_response(
+        self,
+        request: QueryRequest,
+        elapsed_ms: float,
+        rejected: list[RetrievedChunk],
+        rerank_decision: RerankDecision | None = None,
+        warning: str | None = None,
+    ) -> QueryResponse:
         trace = None
         if request.include_trace:
             trace = {
@@ -67,7 +101,9 @@ class QueryService:
                 "alpha": request.alpha,
                 "selected_chunks": [],
                 "rejected_chunks": [_trace_chunk(item, relevant=False) for item in rejected],
+                **_rerank_trace(rerank_decision, []),
             }
+        warnings = [warning] if warning else ["Retrieved chunks did not meet the relevance threshold for this query."]
         return QueryResponse(
             answer="I do not have enough evidence in the indexed documents to answer that.",
             citations=[],
@@ -82,7 +118,7 @@ class QueryService:
             trace=trace,
             grounded=False,
             used_citation_ids=[],
-            warnings=["Retrieved chunks did not meet the relevance threshold for this query."],
+            warnings=warnings,
         )
 
 
@@ -171,6 +207,26 @@ def _trace_chunk(item: RetrievedChunk, relevant: bool) -> dict:
         "lexical_score": item.lexical_score,
         "final_score": item.final_score,
         "relevant": relevant,
+    }
+
+
+def _rerank_trace(decision: RerankDecision | None, selected_chunks: list[RetrievedChunk]) -> dict:
+    if not decision:
+        return {
+            "reranker_provider": None,
+            "reranker_model": None,
+            "answerable": None,
+            "reranker_rationale": None,
+            "candidate_chunk_ids": [chunk.chunk_id for chunk in selected_chunks],
+            "selected_chunk_ids": [chunk.chunk_id for chunk in selected_chunks],
+        }
+    return {
+        "reranker_provider": decision.provider,
+        "reranker_model": decision.model,
+        "answerable": decision.answerable,
+        "reranker_rationale": decision.rationale,
+        "candidate_chunk_ids": decision.candidate_chunk_ids,
+        "selected_chunk_ids": decision.selected_chunk_ids,
     }
 
 

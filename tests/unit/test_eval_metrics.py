@@ -4,6 +4,7 @@ from rag_assistant_api.adapters.llm import MockLLMProvider
 from rag_assistant_api.core.config import Settings
 from rag_assistant_api.domain.models import JobRecord
 from rag_assistant_api.domain.schemas import QueryResponse
+from rag_assistant_api.services.eval_metrics import answer_contains_expected, score_ranked_ids
 from rag_assistant_api.services.jobs import JobService
 from rag_assistant_api.services.evaluation import EvaluationService
 
@@ -51,6 +52,40 @@ def test_eval_dataset_requires_expected_docs_for_answer_rows(tmp_path):
         assert "when should_answer is true" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_eval_dataset_accepts_v2_fields(tmp_path):
+    dataset_dir = tmp_path / "evals"
+    dataset_dir.mkdir()
+    (dataset_dir / "v2.jsonl").write_text(
+        (
+            '{"id":"refund","question":"What is the refund window?",'
+            '"expected_document_ids":["policy"],"expected_chunk_ids":["chunk-a"],'
+            '"expected_answer_contains":"30 days","tags":["exact"],"difficulty":"easy"}\n'
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(eval_dataset_dir=dataset_dir)
+    service = EvaluationService(settings, query_service=None, job_service=None, llm_provider=MockLLMProvider())
+
+    rows = service._load_dataset("v2.jsonl")
+
+    assert rows[0]["expected_chunk_ids"] == ["chunk-a"]
+    assert rows[0]["expected_answer_contains"] == ["30 days"]
+    assert rows[0]["tags"] == ["exact"]
+
+
+def test_chunk_level_metric_calculation_is_stricter_than_document_hit():
+    document_scores = score_ranked_ids(["policy"], ["policy"], top_k=5, should_answer=True)
+    chunk_scores = score_ranked_ids(["chunk-a"], ["chunk-b"], top_k=5, should_answer=True)
+
+    assert document_scores["hit_rate"] == 1.0
+    assert chunk_scores["hit_rate"] == 0.0
+
+
+def test_answer_contains_expected_requires_all_fragments():
+    assert answer_contains_expected("The RTO is 4 hours and the RPO is 15 minutes.", ["4 hours", "15 minutes"]) is True
+    assert answer_contains_expected("The RTO is 4 hours.", ["4 hours", "15 minutes"]) is False
 
 
 def test_evaluation_heartbeats_job_before_each_example(client, tmp_path):

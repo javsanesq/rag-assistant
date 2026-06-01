@@ -33,3 +33,12 @@ def test_chunk_text_does_not_emit_overlap_only_tail_chunk():
 
     assert len(chunks) == 1
     assert len(chunks[0].text.split()) == 100
+
+
+def test_chunk_ids_are_deterministic_for_repeatable_evals():
+    config = ChunkingConfig(chunker_type="recursive", chunk_size=4, chunk_overlap=1)
+
+    first = chunk_text("one two three four five", config)
+    second = chunk_text("one two three four five", config)
+
+    assert [chunk.chunk_id for chunk in first] == [chunk.chunk_id for chunk in second]

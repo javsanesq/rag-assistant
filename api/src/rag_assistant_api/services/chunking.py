@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from rag_assistant_api.domain.schemas import ChunkingConfig
 
@@ -46,7 +46,14 @@ def chunk_text(text: str, config: ChunkingConfig) -> list[TextChunk]:
         nonlocal index, words, has_new_words
         if not words or not has_new_words:
             return
-        chunks.append(TextChunk(chunk_id=str(uuid4()), chunk_index=index, text=" ".join(words)))
+        chunk_text = " ".join(words)
+        chunks.append(
+            TextChunk(
+                chunk_id=str(uuid5(NAMESPACE_URL, f"rag-assistant:{index}:{chunk_text}")),
+                chunk_index=index,
+                text=chunk_text,
+            )
+        )
         index += 1
         words = words[-chunk_overlap:] if chunk_overlap else []
         has_new_words = False

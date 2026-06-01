@@ -6,6 +6,7 @@ from collections import defaultdict
 from rag_assistant_api.adapters.llm import LLMProvider
 from rag_assistant_api.core.config import Settings
 from rag_assistant_api.domain.schemas import EvalRunRequest, QueryRequest
+from rag_assistant_api.services.eval_metrics import answer_contains_expected, mean, score_ranked_ids
 from rag_assistant_api.services.jobs import JobService
 from rag_assistant_api.services.query import QueryService
 
@@ -41,12 +42,18 @@ class EvaluationService:
             hit_rates = []
             recall_scores = []
             reciprocal_ranks = []
+            chunk_precision_scores = []
+            chunk_hit_rates = []
+            chunk_recall_scores = []
+            chunk_reciprocal_ranks = []
             faithfulness_scores = []
+            answer_contains_scores = []
             abstention_scores = []
             unsupported_answer_count = 0
             no_answer_count = 0
             citation_relevance_scores = []
             by_filter = defaultdict(lambda: {"examples": 0, "hits": 0})
+            by_tag = defaultdict(lambda: {"examples": 0, "document_hits": 0, "chunk_hits": 0, "answer_contains": 0})
             total_examples = max(1, len(dataset))
             for index, row in enumerate(dataset, start=1):
                 self.job_service.update_progress(job_id, int(((index - 1) / total_examples) * 95))
@@ -58,28 +65,44 @@ class EvaluationService:
                     date_from=row.get("date_from"),
                     date_to=row.get("date_to"),
                     top_k=request.top_k or self.settings.top_k,
+                    rerank=row.get("rerank", False),
+                    answerability_check=row.get("answerability_check", False),
                 )
                 response = self.query_service.answer_question(query_request)
+                top_k = request.top_k or self.settings.top_k
                 expected_ids = set(row.get("expected_document_ids", []))
+                expected_chunk_ids = row.get("expected_chunk_ids", [])
                 actual_ids = [citation.document_id for citation in response.citations]
+                actual_chunk_ids = [citation.chunk_id for citation in response.citations]
                 hits = [item for item in actual_ids if item in expected_ids]
                 answered = response.grounded and bool(response.used_citation_ids)
                 abstained = not answered
+                metric_actual_ids = [] if abstained else actual_ids
+                metric_actual_chunk_ids = [] if abstained else actual_chunk_ids
+                document_scores = score_ranked_ids(list(expected_ids), metric_actual_ids, top_k, should_answer)
+                chunk_scores = (
+                    score_ranked_ids(expected_chunk_ids, metric_actual_chunk_ids, top_k, should_answer)
+                    if expected_chunk_ids
+                    else document_scores
+                )
                 if should_answer:
-                    precision = len(hits) / max(1, request.top_k or self.settings.top_k)
-                    hit_rate = 1.0 if hits else 0.0
-                    recall = len(set(hits)) / max(1, len(expected_ids))
-                    first_relevant_rank = next((index + 1 for index, item in enumerate(actual_ids) if item in expected_ids), None)
-                    reciprocal_rank = 1 / first_relevant_rank if first_relevant_rank else 0.0
+                    precision = document_scores["precision_at_k"]
+                    hit_rate = document_scores["hit_rate"]
+                    recall = document_scores["recall_at_k"]
+                    reciprocal_rank = document_scores["mrr"]
                     precision_scores.append(precision)
                     hit_rates.append(hit_rate)
                     recall_scores.append(recall)
                     reciprocal_ranks.append(reciprocal_rank)
+                    chunk_precision_scores.append(chunk_scores["precision_at_k"])
+                    chunk_hit_rates.append(chunk_scores["hit_rate"])
+                    chunk_recall_scores.append(chunk_scores["recall_at_k"])
+                    chunk_reciprocal_ranks.append(chunk_scores["mrr"])
                 else:
-                    precision = 0.0
-                    hit_rate = 1.0 if abstained else 0.0
-                    recall = 0.0
-                    reciprocal_rank = 0.0
+                    precision = document_scores["precision_at_k"]
+                    hit_rate = document_scores["hit_rate"]
+                    recall = document_scores["recall_at_k"]
+                    reciprocal_rank = document_scores["mrr"]
                     no_answer_count += 1
                     abstention_scores.append(1.0 if abstained else 0.0)
                     unsupported_answer_count += 0 if abstained else 1
@@ -96,6 +119,17 @@ class EvaluationService:
                 else:
                     citation_relevance = 1.0 if abstained else 0.0
                 citation_relevance_scores.append(citation_relevance)
+                expected_answer_contains = row.get("expected_answer_contains", [])
+                answer_contains = 1.0 if answered and answer_contains_expected(response.answer, expected_answer_contains) else 0.0
+                if not should_answer:
+                    answer_contains = 1.0 if abstained else 0.0
+                answer_contains_scores.append(answer_contains)
+                tags = row.get("tags", []) or ["untagged"]
+                for tag in tags:
+                    by_tag[tag]["examples"] += 1
+                    by_tag[tag]["document_hits"] += int(hit_rate)
+                    by_tag[tag]["chunk_hits"] += int(chunk_scores["hit_rate"])
+                    by_tag[tag]["answer_contains"] += int(answer_contains)
                 faithfulness = self.llm_provider.judge_faithfulness(
                     row["question"],
                     response.answer,
@@ -108,14 +142,25 @@ class EvaluationService:
                         "question": row["question"],
                         "should_answer": should_answer,
                         "expected_document_ids": list(expected_ids),
+                        "expected_chunk_ids": expected_chunk_ids,
                         "actual_document_ids": actual_ids,
+                        "actual_chunk_ids": actual_chunk_ids,
                         "used_document_ids": sorted(used_doc_ids),
+                        "used_chunk_ids": response.used_citation_ids,
                         "abstained": abstained,
+                        "tags": tags,
+                        "difficulty": row.get("difficulty"),
+                        "answerability_reason": row.get("answerability_reason"),
+                        "answer_contains": bool(answer_contains),
                         "citation_relevance": citation_relevance,
                         "precision_at_k": precision,
                         "hit_rate": hit_rate,
                         "recall_at_k": recall,
                         "mrr": reciprocal_rank,
+                        "chunk_precision_at_k": chunk_scores["precision_at_k"],
+                        "chunk_hit_rate": chunk_scores["hit_rate"],
+                        "chunk_recall_at_k": chunk_scores["recall_at_k"],
+                        "chunk_mrr": chunk_scores["mrr"],
                         "faithfulness": faithfulness,
                     }
                 )
@@ -137,20 +182,32 @@ class EvaluationService:
                         "min_meaningful_terms": self.settings.relevance_min_meaningful_terms,
                     },
                 },
-                "precision_at_k": round(sum(precision_scores) / max(1, len(precision_scores)), 4),
-                "hit_rate": round(sum(hit_rates) / max(1, len(hit_rates)), 4),
-                "recall_at_k": round(sum(recall_scores) / max(1, len(recall_scores)), 4),
-                "mrr": round(sum(reciprocal_ranks) / max(1, len(reciprocal_ranks)), 4),
-                "faithfulness_score": round(sum(faithfulness_scores) / max(1, len(faithfulness_scores)), 4),
-                "abstention_accuracy": round(sum(abstention_scores) / max(1, len(abstention_scores)), 4),
+                "precision_at_k": mean(precision_scores),
+                "hit_rate": mean(hit_rates),
+                "recall_at_k": mean(recall_scores),
+                "mrr": mean(reciprocal_ranks),
+                "chunk_precision_at_k": mean(chunk_precision_scores),
+                "chunk_hit_rate": mean(chunk_hit_rates),
+                "chunk_recall_at_k": mean(chunk_recall_scores),
+                "chunk_mrr": mean(chunk_reciprocal_ranks),
+                "answer_contains_rate": mean(answer_contains_scores),
+                "faithfulness_score": mean(faithfulness_scores),
+                "abstention_accuracy": mean(abstention_scores),
                 "unsupported_answer_rate": round(unsupported_answer_count / max(1, no_answer_count), 4),
-                "citation_relevance_rate": round(
-                    sum(citation_relevance_scores) / max(1, len(citation_relevance_scores)), 4
-                ),
+                "citation_relevance_rate": mean(citation_relevance_scores),
                 "no_answer_examples": no_answer_count,
                 "by_filter": {
                     key: {"examples": value["examples"], "hit_rate": round(value["hits"] / max(1, value["examples"]), 4)}
                     for key, value in by_filter.items()
+                },
+                "by_tag": {
+                    key: {
+                        "examples": value["examples"],
+                        "document_hit_rate": round(value["document_hits"] / max(1, value["examples"]), 4),
+                        "chunk_hit_rate": round(value["chunk_hits"] / max(1, value["examples"]), 4),
+                        "answer_contains_rate": round(value["answer_contains"] / max(1, value["examples"]), 4),
+                    }
+                    for key, value in by_tag.items()
                 },
             }
             self.job_service.mark_completed(job_id, {"summary": summary, "examples": results})
@@ -175,8 +232,19 @@ class EvaluationService:
         if not row.get("question"):
             raise ValueError(f"{dataset_name}:{line_number} is missing question.")
         expected = row.get("expected_document_ids")
+        expected_chunks = row.get("expected_chunk_ids", [])
+        expected_answer_contains = row.get("expected_answer_contains", [])
+        tags = row.get("tags", [])
         should_answer = row.get("should_answer", True)
         if not isinstance(expected, list):
             raise ValueError(f"{dataset_name}:{line_number} must include expected_document_ids.")
+        if not isinstance(expected_chunks, list):
+            raise ValueError(f"{dataset_name}:{line_number} expected_chunk_ids must be a list.")
+        if isinstance(expected_answer_contains, str):
+            row["expected_answer_contains"] = [expected_answer_contains]
+        elif not isinstance(expected_answer_contains, list):
+            raise ValueError(f"{dataset_name}:{line_number} expected_answer_contains must be a string or list.")
+        if tags and not isinstance(tags, list):
+            raise ValueError(f"{dataset_name}:{line_number} tags must be a list.")
         if should_answer and not expected:
             raise ValueError(f"{dataset_name}:{line_number} must include expected_document_ids when should_answer is true.")

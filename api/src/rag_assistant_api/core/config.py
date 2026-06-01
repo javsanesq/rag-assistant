@@ -50,6 +50,8 @@ class Settings(BaseSettings):
 
     llm_provider: str = "mock"
     llm_model: str = "gpt-4o-mini"
+    reranker_provider: str = "mock"
+    reranker_model: str = "gpt-4o-mini"
     openai_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
@@ -75,6 +77,7 @@ class Settings(BaseSettings):
     def validate_runtime_settings(self):
         self.embed_provider = self.embed_provider.lower()
         self.llm_provider = self.llm_provider.lower()
+        self.reranker_provider = self.reranker_provider.lower()
         self.app_env = self.app_env.lower()
         if self.qdrant_vector_size <= 0:
             raise ValueError("QDRANT_VECTOR_SIZE must be positive.")
@@ -98,12 +101,16 @@ class Settings(BaseSettings):
             raise ValueError("DEFAULT_CHUNK_OVERLAP must be smaller than DEFAULT_CHUNK_SIZE.")
         if self.app_env == "production" and "mock" in {self.embed_provider, self.llm_provider}:
             raise ValueError("Mock providers are not allowed when APP_ENV=production.")
+        if self.reranker_provider not in {"none", "mock", "openai"}:
+            raise ValueError("RERANKER_PROVIDER must be one of ['none', 'mock', 'openai'].")
         if self.app_env == "production" and not self.api_auth_token:
             raise ValueError("API_AUTH_TOKEN is required when APP_ENV=production.")
         if self.embed_provider == "openai" and not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when EMBED_PROVIDER=openai.")
         if self.llm_provider == "openai" and not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai.")
+        if self.reranker_provider == "openai" and not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required when RERANKER_PROVIDER=openai.")
         return self
 
     @property

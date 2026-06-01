@@ -63,6 +63,8 @@ class QueryRequest(BaseModel):
     retrieval_mode: Literal["dense", "hybrid"] = "hybrid"
     alpha: float = 0.75
     include_trace: bool = False
+    rerank: bool = False
+    answerability_check: bool = False
 
     @field_validator("question")
     @classmethod
