@@ -14,3 +14,22 @@ def test_chunk_text_returns_multiple_chunks():
     chunks = chunk_text(text, ChunkingConfig(chunk_size=120, chunk_overlap=20))
     assert len(chunks) >= 2
     assert chunks[0].chunk_index == 0
+
+
+def test_chunk_text_enforces_size_for_single_large_paragraph():
+    text = " ".join(f"token{index}" for index in range(300))
+
+    chunks = chunk_text(text, ChunkingConfig(chunk_size=100, chunk_overlap=10))
+
+    assert len(chunks) >= 3
+    assert all(len(chunk.text.split()) <= 100 for chunk in chunks)
+    assert [chunk.chunk_index for chunk in chunks] == list(range(len(chunks)))
+
+
+def test_chunk_text_does_not_emit_overlap_only_tail_chunk():
+    text = " ".join(f"token{index}" for index in range(100))
+
+    chunks = chunk_text(text, ChunkingConfig(chunk_size=100, chunk_overlap=20))
+
+    assert len(chunks) == 1
+    assert len(chunks[0].text.split()) == 100

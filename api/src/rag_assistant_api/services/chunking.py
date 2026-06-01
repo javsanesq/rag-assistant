@@ -28,6 +28,8 @@ def chunk_text(text: str, config: ChunkingConfig) -> list[TextChunk]:
     normalized = text.strip()
     if not normalized:
         return []
+    chunk_size = max(1, config.chunk_size)
+    chunk_overlap = min(max(0, config.chunk_overlap), max(0, chunk_size - 1))
     if config.chunker_type == "markdown":
         sections = _split_markdown_sections(normalized)
     elif config.chunker_type == "sentence":
@@ -38,17 +40,30 @@ def chunk_text(text: str, config: ChunkingConfig) -> list[TextChunk]:
     words = []
     chunks: list[TextChunk] = []
     index = 0
+    has_new_words = False
+
+    def flush_chunk() -> None:
+        nonlocal index, words, has_new_words
+        if not words or not has_new_words:
+            return
+        chunks.append(TextChunk(chunk_id=str(uuid4()), chunk_index=index, text=" ".join(words)))
+        index += 1
+        words = words[-chunk_overlap:] if chunk_overlap else []
+        has_new_words = False
+
     for block in blocks:
         block_words = block.split()
-        if not block_words:
-            continue
-        if len(words) + len(block_words) > config.chunk_size and words:
-            chunks.append(TextChunk(chunk_id=str(uuid4()), chunk_index=index, text=" ".join(words)))
-            index += 1
-            words = words[-config.chunk_overlap :] if config.chunk_overlap else []
-        words.extend(block_words)
-    if words:
-        chunks.append(TextChunk(chunk_id=str(uuid4()), chunk_index=index, text=" ".join(words)))
+        while block_words:
+            available = chunk_size - len(words)
+            if available <= 0:
+                flush_chunk()
+                available = chunk_size - len(words)
+            take, block_words = block_words[:available], block_words[available:]
+            words.extend(take)
+            has_new_words = has_new_words or bool(take)
+            if len(words) >= chunk_size:
+                flush_chunk()
+    flush_chunk()
     return chunks
 
 
