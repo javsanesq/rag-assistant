@@ -46,7 +46,7 @@ class JobService:
 
     def mark_running(self, job_id: str) -> None:
         now = datetime.now(timezone.utc)
-        self._update(job_id, status="running", started_at=now)
+        self._update(job_id, status="running", started_at=now, leased_until=now + timedelta(seconds=self.lease_seconds))
 
     def mark_completed(self, job_id: str, result: dict) -> None:
         self._update(
@@ -83,6 +83,9 @@ class JobService:
         if result is not None:
             changes["result_json"] = json.dumps(result, default=str)
         self._update(job_id, **changes)
+
+    def heartbeat(self, job_id: str) -> None:
+        self._update(job_id, leased_until=datetime.now(timezone.utc) + timedelta(seconds=self.lease_seconds))
 
     def claim_next(self, job_types: list[str] | None = None) -> JobRecord | None:
         now = datetime.now(timezone.utc)

@@ -82,6 +82,7 @@ class DocumentService:
             failed_documents = []
             total = max(1, len(files))
             for index, file in enumerate(files, start=1):
+                self.job_service.update_progress(job_id, int(((index - 1) / total) * 90))
                 try:
                     content = Path(file.path).read_bytes()
                     parsed = parse_file_bytes(file.filename, content)
@@ -108,13 +109,27 @@ class DocumentService:
         self.job_service.mark_running(job_id)
         try:
             created_documents = []
-            for source in sources:
-                parsed = fetch_url_content(source, self.settings)
-                if not parsed.text.strip():
-                    raise ValueError(f"No extractable text found at {source}")
-                created_documents.append(self._ingest_parsed_content(parsed, metadata, chunking, job_id, parsed.text.encode("utf-8")))
-                self.job_service.update_progress(job_id, int((len(created_documents) / max(1, len(sources))) * 90))
-            self.job_service.mark_completed(job_id, {"documents": created_documents, "total": len(created_documents)})
+            failed_documents = []
+            total = max(1, len(sources))
+            for index, source in enumerate(sources, start=1):
+                self.job_service.update_progress(job_id, int(((index - 1) / total) * 90))
+                try:
+                    parsed = fetch_url_content(source, self.settings)
+                    if not parsed.text.strip():
+                        raise ValueError(f"No extractable text found at {source}")
+                    created_documents.append(self._ingest_parsed_content(parsed, metadata, chunking, job_id, parsed.text.encode("utf-8")))
+                except Exception as exc:
+                    failed_documents.append({"source": source, "error": str(exc)})
+                self.job_service.update_progress(job_id, int((index / total) * 90))
+            self.job_service.mark_completed(
+                job_id,
+                {
+                    "documents": created_documents,
+                    "failed_documents": failed_documents,
+                    "total": len(created_documents),
+                    "failed_total": len(failed_documents),
+                },
+            )
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("URL ingestion failed", extra={"job_id": job_id})
             self.job_service.mark_failed(job_id, str(exc), error_code="URL_INGESTION_FAILED")
@@ -188,9 +203,12 @@ class DocumentService:
             session.commit()
 
         try:
+            self.job_service.heartbeat(job_id)
             effective_chunking = validate_chunking(chunking, self.settings.max_chunk_size)
             chunks = chunk_text(parsed.text, effective_chunking)
+            self.job_service.heartbeat(job_id)
             embeddings = self.embedding_provider.embed_texts([chunk.text for chunk in chunks]) if chunks else []
+            self.job_service.heartbeat(job_id)
             points = []
             chunk_records = []
             for chunk, vector in zip(chunks, embeddings):

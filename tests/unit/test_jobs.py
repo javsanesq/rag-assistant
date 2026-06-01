@@ -103,3 +103,15 @@ def test_update_progress_extends_running_job_lease(client):
     leased_until = current.leased_until if current.leased_until.tzinfo else current.leased_until.replace(tzinfo=timezone.utc)
     assert current.progress == 50
     assert leased_until > datetime.now(timezone.utc)
+
+
+def test_mark_running_sets_initial_lease(client):
+    service = JobService(client.app.state.session_factory, lease_seconds=60)
+    job = service.create_job("evaluation", {"dataset_name": "noop.jsonl"})
+
+    service.mark_running(job.id)
+
+    current = service.get_job(job.id)
+    leased_until = current.leased_until if current.leased_until.tzinfo else current.leased_until.replace(tzinfo=timezone.utc)
+    assert current.status == "running"
+    assert leased_until > datetime.now(timezone.utc)

@@ -152,6 +152,39 @@ def test_url_ingest_job_completes_and_creates_document(client, monkeypatch):
     assert any(item["source_type"] == "url" and item["source_uri"] == "https://example.com/policy" for item in documents)
 
 
+def test_url_ingest_reports_partial_failures(client, monkeypatch):
+    def fake_getaddrinfo(hostname, *_args, **_kwargs):
+        assert hostname == "example.com"
+        return [(None, None, None, None, ("93.184.216.34", 0))]
+
+    def fake_fetch_url_content(url, _settings):
+        if url.endswith("/bad"):
+            raise ValueError("No readable page.")
+        return ParsedContent(
+            title="Good URL",
+            text="The good URL contains a searchable policy.",
+            source_type="url",
+            source_uri=url,
+            metadata={"category": "policy"},
+        )
+
+    monkeypatch.setattr(url_loader.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(document_service_module, "fetch_url_content", fake_fetch_url_content)
+
+    response = client.post(
+        "/api/v1/documents/urls",
+        json={"urls": ["https://example.com/good", "https://example.com/bad"]},
+    )
+
+    assert response.status_code == 200
+    assert run_once(client.app.state.runtime) is True
+    completed = client.get(f"/api/v1/jobs/{response.json()['id']}").json()
+    assert completed["status"] == "completed"
+    assert completed["result"]["total"] == 1
+    assert completed["result"]["failed_total"] == 1
+    assert completed["result"]["failed_documents"][0]["source"] == "https://example.com/bad"
+
+
 def test_eval_datasets_are_listed(client):
     response = client.get("/api/v1/evals/datasets")
     assert response.status_code == 200

@@ -47,7 +47,9 @@ class EvaluationService:
             no_answer_count = 0
             citation_relevance_scores = []
             by_filter = defaultdict(lambda: {"examples": 0, "hits": 0})
-            for row in dataset:
+            total_examples = max(1, len(dataset))
+            for index, row in enumerate(dataset, start=1):
+                self.job_service.update_progress(job_id, int(((index - 1) / total_examples) * 95))
                 should_answer = row.get("should_answer", True)
                 query_request = QueryRequest(
                     question=row["question"],
@@ -117,6 +119,7 @@ class EvaluationService:
                         "faithfulness": faithfulness,
                     }
                 )
+                self.job_service.update_progress(job_id, int((index / total_examples) * 95))
             summary = {
                 "dataset_name": request.dataset_name,
                 "examples": len(results),
