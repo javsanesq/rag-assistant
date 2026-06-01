@@ -181,9 +181,11 @@ class DocumentService:
         source_hash = hashlib.sha256(raw_content).hexdigest()
         merged_metadata["source_hash"] = source_hash
         serialized_metadata = json.loads(json.dumps(merged_metadata, default=str))
-        document_id = self._existing_document_id_for_hash(source_hash, parsed.source_uri)
-        if document_id:
-            self.delete_document(document_id)
+        existing_document_ids = self._existing_document_ids_for_source(parsed.source_uri)
+        if existing_document_ids:
+            document_id = existing_document_ids[0]
+            for existing_document_id in existing_document_ids:
+                self.delete_document(existing_document_id)
         else:
             document_id = self._next_document_id(parsed.title, parsed.source_uri)
         with self.session_factory() as session:
@@ -290,14 +292,10 @@ class DocumentService:
                 counter += 1
         return f"{candidate}-{counter}"
 
-    def _existing_document_id_for_hash(self, source_hash: str, source_uri: str) -> str | None:
+    def _existing_document_ids_for_source(self, source_uri: str) -> list[str]:
         with self.session_factory() as session:
             records = session.scalars(select(DocumentRecord).where(DocumentRecord.source_uri == source_uri)).all()
-        for record in records:
-            metadata = json.loads(record.metadata_json or "{}")
-            if metadata.get("source_hash") == source_hash:
-                return record.document_id
-        return None
+        return [record.document_id for record in records]
 
     def _serialize_document(self, record: DocumentRecord) -> DocumentResponse:
         return DocumentResponse(

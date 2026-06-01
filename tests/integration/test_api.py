@@ -110,6 +110,33 @@ def test_invalid_upload_is_rejected(client):
     assert response.json()["detail"]["rejected_files"][0]["reason"].startswith("Unsupported")
 
 
+def test_reingesting_same_source_replaces_previous_document(client):
+    first = client.post(
+        "/api/v1/documents/files",
+        files=[("files", ("policy.md", b"# Policy\nOld refund window is 10 days.", "text/markdown"))],
+    )
+    assert first.status_code == 200
+    assert run_once(client.app.state.runtime) is True
+
+    second = client.post(
+        "/api/v1/documents/files",
+        files=[("files", ("policy.md", b"# Policy\nNew refund window is 45 days.", "text/markdown"))],
+    )
+    assert second.status_code == 200
+    assert run_once(client.app.state.runtime) is True
+
+    docs_response = client.get("/api/v1/documents")
+    documents = [item for item in docs_response.json()["documents"] if item["source_uri"] == "policy.md"]
+    assert len(documents) == 1
+    assert documents[0]["document_id"] == "policy"
+
+    with client.app.state.session_factory() as session:
+        chunks = session.scalars(select(ChunkRecord).where(ChunkRecord.document_id == "policy")).all()
+    assert len(chunks) == 1
+    assert "45 days" in chunks[0].chunk_text
+    assert "10 days" not in chunks[0].chunk_text
+
+
 def test_private_url_is_blocked(client):
     response = client.post("/api/v1/documents/urls", json={"url": "http://127.0.0.1:8080"})
     assert response.status_code == 400
