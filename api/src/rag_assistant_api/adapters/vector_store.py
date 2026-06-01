@@ -111,14 +111,11 @@ class QdrantVectorStore:
         )
         hits = response.points
         results: list[RetrievedChunk] = []
-        query_terms = _tokenize(query_text)
         for hit in hits:
             payload = hit.payload or {}
             document_date = date.fromisoformat(payload["document_date"]) if payload.get("document_date") else None
             dense_score = float(hit.score)
             dense_for_final = max(0.0, min(1.0, dense_score))
-            lexical_score = _lexical_score(query_terms, payload.get("lexical_terms") or [])
-            final_score = dense_for_final if retrieval_mode == "dense" else alpha * dense_for_final + (1 - alpha) * lexical_score
             results.append(
                 RetrievedChunk(
                     chunk_id=str(hit.id),
@@ -128,10 +125,10 @@ class QdrantVectorStore:
                     category=payload.get("category"),
                     document_date=document_date,
                     excerpt=str(payload.get("chunk_text", "")),
-                    score=final_score,
+                    score=dense_for_final,
                     dense_score=dense_score,
-                    lexical_score=lexical_score,
-                    final_score=final_score,
+                    lexical_score=0.0,
+                    final_score=dense_for_final,
                     chunk_index=int(payload.get("chunk_index", 0)),
                 )
             )

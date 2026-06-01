@@ -142,8 +142,8 @@ def _is_relevant_chunk(chunk: RetrievedChunk, settings: Settings, question_terms
     has_meaningful_overlap = meaningful_overlap >= settings.relevance_min_meaningful_terms
     lexical_relevant = chunk.lexical_score >= settings.relevance_min_lexical_score
     dense_relevant = chunk.dense_score >= settings.relevance_min_dense_score
-    final_relevant = chunk.final_score >= settings.relevance_min_final_score and chunk.lexical_score > 0
-    return dense_relevant or (has_meaningful_overlap and (lexical_relevant or final_relevant))
+    final_relevant = chunk.final_score >= settings.relevance_min_final_score
+    return dense_relevant or lexical_relevant or (has_meaningful_overlap and final_relevant)
 
 
 def _to_citation(item: RetrievedChunk) -> Citation:
@@ -202,13 +202,7 @@ _STOPWORDS = {
 
 def _meaningful_terms(text: str) -> set[str]:
     return {
-        _normalize_term(token)
+        token
         for token in re.findall(r"[a-zA-Z0-9]{3,}", text.lower())
         if token not in _STOPWORDS and not token.isdigit()
     }
-
-
-def _normalize_term(token: str) -> str:
-    if len(token) > 4 and token.endswith("s"):
-        return token[:-1]
-    return token

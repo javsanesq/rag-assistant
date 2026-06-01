@@ -27,8 +27,8 @@ class Settings(BaseSettings):
 
     top_k: int = 5
     relevance_min_lexical_score: float = 0.12
-    relevance_min_dense_score: float = 0.92
-    relevance_min_final_score: float = 0.12
+    relevance_min_dense_score: float = 0.40
+    relevance_min_final_score: float = 0.01
     relevance_min_meaningful_terms: int = 2
     default_chunker_type: str = "recursive"
     default_chunk_size: int = 700

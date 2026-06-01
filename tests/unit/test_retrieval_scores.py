@@ -4,7 +4,7 @@ from rag_assistant_api.adapters.vector_store import RetrievedChunk
 from rag_assistant_api.core.db import build_engine, build_session_factory
 from rag_assistant_api.domain.models import ChunkRecord
 from rag_assistant_api.domain.schemas import QueryRequest
-from rag_assistant_api.services.retrieval import RetrievalService
+from rag_assistant_api.services.retrieval import RetrievalService, _fuse_candidates
 
 
 def test_lexical_score_counts_query_term_overlap():
@@ -32,6 +32,21 @@ def test_hybrid_retrieval_can_return_lexical_candidate_when_dense_misses():
 
     assert [item.document_id for item in results] == ["lexical-document"]
     assert results[0].lexical_score == 1.0
+
+
+def test_hybrid_fusion_uses_rank_not_raw_score_scale():
+    dense_first = _retrieved_chunk("dense-first", dense_score=0.95, lexical_score=0.0)
+    lexical_first = _retrieved_chunk("lexical-first", dense_score=0.05, lexical_score=1.0)
+
+    results = _fuse_candidates(
+        dense_hits=[dense_first, lexical_first],
+        lexical_hits=[lexical_first],
+        top_k=2,
+        alpha=0.5,
+    )
+
+    assert results[0].chunk_id == "lexical-first"
+    assert results[0].final_score > results[1].final_score
 
 
 def test_sqlite_fts_bm25_lexical_store_ranks_exact_terms(tmp_path):
@@ -116,3 +131,20 @@ class FakeLexicalStore:
                 chunk_index=0,
             )
         ]
+
+
+def _retrieved_chunk(chunk_id: str, dense_score: float, lexical_score: float) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id=chunk_id,
+        document_id=chunk_id,
+        title=chunk_id,
+        source_uri=f"{chunk_id}.md",
+        category=None,
+        document_date=None,
+        excerpt=chunk_id,
+        score=dense_score,
+        dense_score=dense_score,
+        lexical_score=lexical_score,
+        final_score=dense_score,
+        chunk_index=0,
+    )

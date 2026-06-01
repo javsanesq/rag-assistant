@@ -58,20 +58,37 @@ def _fuse_candidates(
     alpha: float,
 ) -> list[RetrievedChunk]:
     merged: dict[str, RetrievedChunk] = {}
-    for hit in [*dense_hits, *lexical_hits]:
+    for hit in dense_hits:
         existing = merged.get(hit.chunk_id)
         if existing is None:
             merged[hit.chunk_id] = hit
             continue
         existing.dense_score = max(existing.dense_score, hit.dense_score)
+    for hit in lexical_hits:
+        existing = merged.get(hit.chunk_id)
+        if existing is None:
+            merged[hit.chunk_id] = hit
+            continue
         existing.lexical_score = max(existing.lexical_score, hit.lexical_score)
 
+    dense_ranks = {hit.chunk_id: index + 1 for index, hit in enumerate(dense_hits)}
+    lexical_ranks = {hit.chunk_id: index + 1 for index, hit in enumerate(lexical_hits)}
     for hit in merged.values():
-        dense_for_final = _normalize_dense_score(hit.dense_score)
-        hit.final_score = alpha * dense_for_final + (1 - alpha) * hit.lexical_score
+        hit.final_score = _weighted_rrf_score(hit.chunk_id, dense_ranks, lexical_ranks, alpha=alpha)
         hit.score = hit.final_score
     return sorted(merged.values(), key=lambda item: item.final_score, reverse=True)[:top_k]
 
 
-def _normalize_dense_score(score: float) -> float:
-    return max(0.0, min(1.0, score))
+def _weighted_rrf_score(
+    chunk_id: str,
+    dense_ranks: dict[str, int],
+    lexical_ranks: dict[str, int],
+    alpha: float,
+    rank_constant: int = 60,
+) -> float:
+    score = 0.0
+    if chunk_id in dense_ranks:
+        score += alpha * (1 / (rank_constant + dense_ranks[chunk_id]))
+    if chunk_id in lexical_ranks:
+        score += (1 - alpha) * (1 / (rank_constant + lexical_ranks[chunk_id]))
+    return score

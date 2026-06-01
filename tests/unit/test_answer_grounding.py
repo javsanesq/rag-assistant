@@ -57,13 +57,28 @@ def test_relevance_gate_rejects_dense_only_noise():
     settings = Settings()
 
     relevant, rejected = _filter_relevant_chunks(
-        [_chunk("dense-noise", dense_score=0.4, lexical_score=0.0, final_score=0.4)],
+        [_chunk("dense-noise", dense_score=0.39, lexical_score=0.0, final_score=0.01)],
         settings,
         "What is the Zurich office phone number?",
     )
 
     assert relevant == []
     assert rejected[0].chunk_id == "dense-noise"
+
+
+def test_relevance_gate_accepts_strong_dense_paraphrase_without_overlap():
+    settings = Settings()
+    chunk = _chunk("dense-paraphrase", dense_score=0.45, lexical_score=0.0, final_score=0.01)
+    chunk.excerpt = "Primary caregivers receive sixteen weeks of paid parental leave."
+
+    relevant, rejected = _filter_relevant_chunks(
+        [chunk],
+        settings,
+        "How long can new mothers and fathers stay home after a birth?",
+    )
+
+    assert relevant[0].chunk_id == "dense-paraphrase"
+    assert rejected == []
 
 
 def test_relevance_gate_accepts_lexical_match():
