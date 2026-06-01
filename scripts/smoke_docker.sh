@@ -3,6 +3,7 @@ set -euo pipefail
 
 API_URL="${API_URL:-http://localhost:8000}"
 UI_URL="${UI_URL:-http://localhost:3000}"
+API_AUTH_TOKEN="${API_AUTH_TOKEN:-change-me-dev-token}"
 POLL_ATTEMPTS="${POLL_ATTEMPTS:-60}"
 POLL_SECONDS="${POLL_SECONDS:-2}"
 START_STACK="${START_STACK:-0}"
@@ -71,7 +72,7 @@ PY
 }
 
 curl_json() {
-  curl --fail --silent --show-error "$@"
+  curl --fail --silent --show-error -H "x-api-key: ${API_AUTH_TOKEN}" "$@"
 }
 
 wait_for_json_endpoint() {

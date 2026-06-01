@@ -6,6 +6,20 @@ const state = {
   evals: [],
 };
 
+function initializeApiToken() {
+  const input = document.getElementById("api-token");
+  if (!input) return;
+  input.value = localStorage.getItem("ragAssistantApiToken") || "";
+  input.addEventListener("input", () => {
+    const token = input.value.trim();
+    if (token) {
+      localStorage.setItem("ragAssistantApiToken", token);
+    } else {
+      localStorage.removeItem("ragAssistantApiToken");
+    }
+  });
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -26,6 +40,8 @@ async function fetchJson(url, options) {
   }
   return response.json();
 }
+
+initializeApiToken();
 
 function renderStatus(message, ok = true) {
   const node = document.getElementById("api-status");

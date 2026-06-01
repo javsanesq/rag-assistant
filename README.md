@@ -43,6 +43,7 @@ Open:
 
 `docker compose` starts four services: API, worker, Qdrant, and UI. The API enqueues ingestion/evaluation jobs; the worker claims and executes them.
 The API and worker apply Alembic migrations at startup, so a fresh `DATABASE_URL` is initialized automatically.
+The checked-in `.env.example` uses `API_AUTH_TOKEN=change-me-dev-token`; paste that token into the UI token field for the local demo, and replace it before any real deployment.
 
 ## Local development
 
@@ -78,7 +79,9 @@ Important defaults:
 - Set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=...` for hosted answer generation.
 - Set `DATABASE_URL=postgresql+psycopg://...` when deploying against Postgres instead of local SQLite.
 - Relevance thresholds are configurable through `RELEVANCE_MIN_*` environment variables.
-- Set `API_AUTH_TOKEN` before exposing the API outside local development. When `APP_ENV=production`, mock providers are rejected and `API_AUTH_TOKEN` is required.
+- `/api/v1/*` routes fail closed when `API_AUTH_TOKEN` is empty. Set a strong token before exposing the API; clients may send it as `x-api-key` or `Authorization: Bearer ...`.
+- `POST /api/v1/query` and `POST /api/v1/documents/urls` have simple per-client rate limits controlled by `API_QUERY_RATE_LIMIT_PER_MINUTE`, `API_URL_INGEST_RATE_LIMIT_PER_MINUTE`, and `API_RATE_LIMIT_WINDOW_SECONDS`.
+- When `APP_ENV=production`, mock providers are rejected and `API_AUTH_TOKEN` is required.
 - Docker Compose binds demo ports to `127.0.0.1` by default. Put Qdrant on a private network and expose only the UI/API through a reverse proxy for production.
 
 ## Database migrations
@@ -170,6 +173,12 @@ The E2E smoke uploads the checked-in sample knowledge base, waits for the worker
 
 ```bash
 START_STACK=1 make smoke-e2e
+```
+
+If you changed `API_AUTH_TOKEN`, pass the same value to the smoke script:
+
+```bash
+API_AUTH_TOKEN=your-token START_STACK=1 make smoke-e2e
 ```
 
 ## Benchmark

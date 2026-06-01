@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     api_cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
     api_auth_token: str = ""
     api_docs_enabled: bool = True
+    api_query_rate_limit_per_minute: int = 30
+    api_url_ingest_rate_limit_per_minute: int = 10
+    api_rate_limit_window_seconds: int = 60
     database_url: str | None = None
     worker_poll_seconds: float = 2.0
     job_lease_seconds: int = 300
@@ -77,6 +80,12 @@ class Settings(BaseSettings):
             raise ValueError("QDRANT_VECTOR_SIZE must be positive.")
         if self.top_k <= 0:
             raise ValueError("TOP_K must be positive.")
+        if self.api_query_rate_limit_per_minute < 0:
+            raise ValueError("API_QUERY_RATE_LIMIT_PER_MINUTE must be non-negative.")
+        if self.api_url_ingest_rate_limit_per_minute < 0:
+            raise ValueError("API_URL_INGEST_RATE_LIMIT_PER_MINUTE must be non-negative.")
+        if self.api_rate_limit_window_seconds <= 0:
+            raise ValueError("API_RATE_LIMIT_WINDOW_SECONDS must be positive.")
         if not 0 <= self.relevance_min_lexical_score <= 1:
             raise ValueError("RELEVANCE_MIN_LEXICAL_SCORE must be between 0 and 1.")
         if not 0 <= self.relevance_min_dense_score <= 1:

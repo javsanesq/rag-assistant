@@ -21,6 +21,40 @@ def test_health_ready(client):
     assert response.json()["checks"]["qdrant"] == "ok"
 
 
+def test_api_rejects_missing_or_wrong_auth_token(client):
+    health_response = client.get("/health/ready", headers={"x-api-key": ""})
+    assert health_response.status_code == 200
+
+    missing_response = client.get("/api/v1/documents", headers={"x-api-key": ""})
+    assert missing_response.status_code == 401
+
+    wrong_response = client.get("/api/v1/documents", headers={"x-api-key": "wrong-token"})
+    assert wrong_response.status_code == 401
+
+
+def test_api_accepts_bearer_auth_token(client):
+    response = client.get(
+        "/api/v1/documents",
+        headers={"x-api-key": "", "authorization": "Bearer test-token"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_query_rate_limit_is_enforced(client, monkeypatch):
+    from rag_assistant_api import main
+
+    main._rate_limit_events.clear()
+    monkeypatch.setattr(main.settings, "api_query_rate_limit_per_minute", 1)
+
+    first = client.post("/api/v1/query", json={"question": "What is indexed?"})
+    second = client.post("/api/v1/query", json={"question": "What is indexed?"})
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    main._rate_limit_events.clear()
+
+
 def test_file_ingest_query_and_eval_flow(client):
     files = [
         ("files", ("company-handbook.md", _sample_path("company-handbook.md").read_bytes(), "text/markdown")),

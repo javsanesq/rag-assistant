@@ -14,9 +14,10 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("QDRANT_COLLECTION", "test_collection")
     monkeypatch.setenv("EMBED_PROVIDER", "mock")
     monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("API_AUTH_TOKEN", "test-token")
     monkeypatch.setenv("EVAL_DATASET_DIR", str(repo_root / "evals" / "datasets"))
 
     from rag_assistant_api.main import app
 
-    with TestClient(app) as test_client:
+    with TestClient(app, headers={"x-api-key": "test-token"}) as test_client:
         yield test_client
