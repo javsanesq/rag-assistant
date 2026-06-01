@@ -72,7 +72,7 @@ class DocumentService:
         return job.id
 
     def queue_url_ingest(self, request_payload: dict[str, Any]) -> str:
-        job = self.job_service.create_job("ingestion", request_payload)
+        job = self.job_service.create_job("ingestion", {"source": "urls", **request_payload})
         return job.id
 
     def process_file_batch(self, job_id: str, files: list[FilePayload], metadata: dict[str, Any], chunking: ChunkingConfig) -> None:
