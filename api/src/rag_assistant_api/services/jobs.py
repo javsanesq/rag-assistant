@@ -59,17 +59,27 @@ class JobService:
         )
 
     def mark_failed(self, job_id: str, error_message: str, error_code: str = "JOB_FAILED") -> None:
-        self._update(
-            job_id,
-            status="failed",
-            completed_at=datetime.now(timezone.utc),
-            leased_until=None,
-            error_code=error_code,
-            error_message=error_message,
-        )
+        with self.session_factory() as session:
+            job = session.get(JobRecord, job_id)
+            if not job:
+                return
+            job.error_code = error_code
+            job.error_message = error_message
+            job.leased_until = None
+            if job.attempts < job.max_attempts:
+                job.status = "queued"
+                job.completed_at = None
+            else:
+                job.status = "failed"
+                job.completed_at = datetime.now(timezone.utc)
+            session.add(job)
+            session.commit()
 
     def update_progress(self, job_id: str, progress: int, result: dict | None = None) -> None:
-        changes = {"progress": max(0, min(100, progress))}
+        changes = {
+            "progress": max(0, min(100, progress)),
+            "leased_until": datetime.now(timezone.utc) + timedelta(seconds=self.lease_seconds),
+        }
         if result is not None:
             changes["result_json"] = json.dumps(result, default=str)
         self._update(job_id, **changes)
@@ -103,7 +113,10 @@ class JobService:
                             (JobRecord.started_at.is_(None), now),
                             else_=JobRecord.started_at,
                         ),
-                        attempts=JobRecord.attempts + 1,
+                        attempts=case(
+                            (JobRecord.status == "queued", JobRecord.attempts + 1),
+                            else_=JobRecord.attempts,
+                        ),
                         leased_until=leased_until,
                         error_code=None,
                         error_message=None,
