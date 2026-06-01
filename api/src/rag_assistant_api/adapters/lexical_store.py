@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date
 
-from sqlalchemy import text, select
+from sqlalchemy import bindparam, text, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from rag_assistant_api.adapters.vector_store import RetrievedChunk, _lexical_score, _tokenize
@@ -64,13 +64,60 @@ def _sqlite_fts_available(session: Session) -> bool:
         )
         indexed = session.execute(text("SELECT COUNT(*) FROM chunks_fts")).scalar_one()
         chunk_count = session.execute(text("SELECT COUNT(*) FROM chunks")).scalar_one()
-        if indexed != chunk_count:
+        _ensure_fts_triggers(session)
+        if indexed != chunk_count or _fts_needs_rebuild(session):
             _rebuild_fts_index(session)
         session.commit()
         return True
     except Exception:
         session.rollback()
         return False
+
+
+def _ensure_fts_triggers(session: Session) -> None:
+    session.execute(
+        text(
+            "CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN "
+            "INSERT INTO chunks_fts(chunk_id, chunk_text) VALUES (new.chunk_id, new.chunk_text); "
+            "END"
+        )
+    )
+    session.execute(
+        text(
+            "CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN "
+            "DELETE FROM chunks_fts WHERE chunk_id = old.chunk_id; "
+            "END"
+        )
+    )
+    session.execute(
+        text(
+            "CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE OF chunk_text ON chunks BEGIN "
+            "UPDATE chunks_fts SET chunk_text = new.chunk_text WHERE chunk_id = old.chunk_id; "
+            "END"
+        )
+    )
+
+
+def _fts_needs_rebuild(session: Session) -> bool:
+    stale_row = session.execute(
+        text(
+            "SELECT 1 FROM chunks "
+            "LEFT JOIN chunks_fts ON chunks_fts.chunk_id = chunks.chunk_id "
+            "WHERE chunks_fts.chunk_id IS NULL OR chunks_fts.chunk_text != chunks.chunk_text "
+            "LIMIT 1"
+        )
+    ).first()
+    if stale_row:
+        return True
+    orphan_row = session.execute(
+        text(
+            "SELECT 1 FROM chunks_fts "
+            "LEFT JOIN chunks ON chunks.chunk_id = chunks_fts.chunk_id "
+            "WHERE chunks.chunk_id IS NULL "
+            "LIMIT 1"
+        )
+    ).first()
+    return orphan_row is not None
 
 
 def _rebuild_fts_index(session: Session) -> None:
@@ -92,26 +139,33 @@ def _search_sqlite_fts(
     date_to_timestamp: int | None,
 ) -> list[RetrievedChunk]:
     fts_query = " OR ".join(f'"{term}"' for term in query_terms)
-    rows = session.execute(
-        text(
-            "SELECT chunk_id, bm25(chunks_fts) AS rank "
-            "FROM chunks_fts WHERE chunks_fts MATCH :query "
-            "ORDER BY rank LIMIT :limit"
-        ),
-        {"query": fts_query, "limit": max(top_k * 10, 25)},
-    ).all()
+    clauses = ["chunks_fts MATCH :query"]
+    params: dict[str, object] = {"query": fts_query, "limit": top_k}
+    if document_ids:
+        clauses.append("chunks.document_id IN :document_ids")
+        params["document_ids"] = document_ids
+    if category:
+        clauses.append("chunks.category = :category")
+        params["category"] = category
+    if date_from_timestamp is not None:
+        clauses.append("chunks.document_timestamp >= :date_from_timestamp")
+        params["date_from_timestamp"] = date_from_timestamp
+    if date_to_timestamp is not None:
+        clauses.append("chunks.document_timestamp <= :date_to_timestamp")
+        params["date_to_timestamp"] = date_to_timestamp
+    stmt = text(
+        "SELECT chunks_fts.chunk_id, bm25(chunks_fts) AS rank "
+        "FROM chunks_fts JOIN chunks ON chunks.chunk_id = chunks_fts.chunk_id "
+        f"WHERE {' AND '.join(clauses)} "
+        "ORDER BY rank LIMIT :limit"
+    )
+    if document_ids:
+        stmt = stmt.bindparams(bindparam("document_ids", expanding=True))
+    rows = session.execute(stmt, params).all()
     if not rows:
         return []
     rank_by_chunk_id = {row.chunk_id: float(row.rank) for row in rows}
     stmt = select(ChunkRecord).where(ChunkRecord.chunk_id.in_(rank_by_chunk_id))
-    if document_ids:
-        stmt = stmt.where(ChunkRecord.document_id.in_(document_ids))
-    if category:
-        stmt = stmt.where(ChunkRecord.category == category)
-    if date_from_timestamp is not None:
-        stmt = stmt.where(ChunkRecord.document_timestamp >= date_from_timestamp)
-    if date_to_timestamp is not None:
-        stmt = stmt.where(ChunkRecord.document_timestamp <= date_to_timestamp)
     records = session.scalars(stmt).all()
     if not records:
         return []

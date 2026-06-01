@@ -56,25 +56,21 @@ def test_sqlite_fts_bm25_lexical_store_ranks_exact_terms(tmp_path):
     with session_factory() as session:
         session.add_all(
             [
-                ChunkRecord(
+                _chunk_record(
                     chunk_id="exact",
                     document_id="security-runbook",
                     title="Security Runbook",
                     source_uri="security.md",
-                    source_type="markdown",
                     category="security",
-                    chunk_index=0,
                     chunk_text="The emergency rotation keyword is KESTREL-42-ZETA.",
                     lexical_terms_json='["emergency", "rotation", "keyword", "kestrel", "zeta"]',
                 ),
-                ChunkRecord(
+                _chunk_record(
                     chunk_id="weak",
                     document_id="general",
                     title="General",
                     source_uri="general.md",
-                    source_type="markdown",
                     category="security",
-                    chunk_index=0,
                     chunk_text="The weekly security meeting reviews access requests.",
                     lexical_terms_json='["weekly", "security", "meeting", "access"]',
                 ),
@@ -86,6 +82,82 @@ def test_sqlite_fts_bm25_lexical_store_ranks_exact_terms(tmp_path):
 
     assert results[0].chunk_id == "exact"
     assert results[0].document_id == "security-runbook"
+
+
+def test_sqlite_fts_bm25_filters_before_ranking(tmp_path):
+    engine = build_engine(f"sqlite:///{tmp_path / 'filtered.db'}")
+    ChunkRecord.metadata.create_all(engine)
+    session_factory = build_session_factory(engine)
+    with session_factory() as session:
+        session.add_all(
+            [
+                _chunk_record(
+                    chunk_id=f"global-{index}",
+                    document_id=f"global-{index}",
+                    title="Global",
+                    source_uri=f"global-{index}.md",
+                    category="general",
+                    chunk_text=f"Global KESTREL policy distractor {index}.",
+                )
+                for index in range(40)
+            ]
+        )
+        session.add(
+            _chunk_record(
+                chunk_id="target",
+                document_id="target-doc",
+                title="Target",
+                source_uri="target.md",
+                category="target",
+                chunk_text="Target category KESTREL answer.",
+            )
+        )
+        session.commit()
+
+    results = SQLLexicalStore(session_factory).search("KESTREL", top_k=1, category="target")
+
+    assert [item.chunk_id for item in results] == ["target"]
+
+
+def test_sqlite_fts_bm25_index_tracks_equal_count_replacements(tmp_path):
+    engine = build_engine(f"sqlite:///{tmp_path / 'stale.db'}")
+    ChunkRecord.metadata.create_all(engine)
+    session_factory = build_session_factory(engine)
+    with session_factory() as session:
+        session.add_all(
+            [
+                _chunk_record(
+                    chunk_id="old",
+                    document_id="old-doc",
+                    title="Old",
+                    source_uri="old.md",
+                    category="policy",
+                    chunk_text="The KESTREL procedure used to live here.",
+                ),
+                _chunk_record(
+                    chunk_id="new",
+                    document_id="new-doc",
+                    title="New",
+                    source_uri="new.md",
+                    category="policy",
+                    chunk_text="This chunk does not contain the keyword yet.",
+                ),
+            ]
+        )
+        session.commit()
+
+    store = SQLLexicalStore(session_factory)
+    assert store.search("KESTREL", top_k=1)[0].chunk_id == "old"
+
+    with session_factory() as session:
+        old = session.get(ChunkRecord, "old")
+        new = session.get(ChunkRecord, "new")
+        old.chunk_text = "The procedure moved away from this chunk."
+        new.chunk_text = "The KESTREL procedure now lives here."
+        session.add_all([old, new])
+        session.commit()
+
+    assert store.search("KESTREL", top_k=1)[0].chunk_id == "new"
 
 
 class FakeEmbeddingProvider:
@@ -147,4 +219,28 @@ def _retrieved_chunk(chunk_id: str, dense_score: float, lexical_score: float) ->
         lexical_score=lexical_score,
         final_score=dense_score,
         chunk_index=0,
+    )
+
+
+def _chunk_record(
+    chunk_id: str,
+    document_id: str,
+    title: str,
+    source_uri: str,
+    category: str,
+    chunk_text: str,
+    source_type: str = "markdown",
+    chunk_index: int = 0,
+    lexical_terms_json: str = "[]",
+) -> ChunkRecord:
+    return ChunkRecord(
+        chunk_id=chunk_id,
+        document_id=document_id,
+        title=title,
+        source_uri=source_uri,
+        source_type=source_type,
+        category=category,
+        chunk_index=chunk_index,
+        chunk_text=chunk_text,
+        lexical_terms_json=lexical_terms_json,
     )
