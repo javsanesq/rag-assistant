@@ -282,6 +282,7 @@ def _render_report(results: dict, cases: list[BenchmarkCase], top_k: int) -> str
             "",
             f"- `dense_only` is the semantic-vector baseline. On this benchmark it already retrieved the expected document for every answerable example (hit rate {dense_summary['hit_rate']:.4f}).",
             f"- `hybrid_bm25` adds SQLite FTS5 BM25 lexical retrieval and weighted Reciprocal Rank Fusion. On this corpus it matched dense retrieval's hit rate ({hybrid_summary['hit_rate']:.4f}), which means the answerable questions were not hard enough to expose a BM25 recall gain.",
+            f"- Hybrid retrieval without reranking can over-retrieve lexically related but insufficient chunks on unsupported questions; its abstention accuracy was {hybrid_summary['abstention_accuracy']:.4f}.",
             f"- `hybrid_bm25_reranked` applies an OpenAI answerability reranker. The main measured gain was no-answer behavior: abstention accuracy moved from {dense_summary['abstention_accuracy']:.4f} to {reranked_summary['abstention_accuracy']:.4f}.",
             f"- Precision@K is capped at {1 / top_k:.4f} for this dataset because each answerable question has one expected document and the benchmark retrieves K={top_k} candidates.",
             "- The takeaway is that OpenAI embeddings are already strong on clean single-hop policy questions; the reranker adds value by rejecting retrieved-but-insufficient context.",

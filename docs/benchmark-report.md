@@ -17,13 +17,14 @@ This report compares retrieval quality on a synthetic but realistic benchmark co
 | Mode | Precision@K | Hit Rate | Recall@K | MRR | Abstention Accuracy |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | dense_only | 0.2000 | 1.0000 | 1.0000 | 1.0000 | 0.5000 |
-| hybrid_bm25 | 0.2000 | 1.0000 | 1.0000 | 1.0000 | 0.5000 |
+| hybrid_bm25 | 0.2000 | 1.0000 | 1.0000 | 1.0000 | 0.0000 |
 | hybrid_bm25_reranked | 0.2000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 |
 
 ## Interpretation
 
 - `dense_only` is the semantic-vector baseline. On this benchmark it already retrieved the expected document for every answerable example (hit rate 1.0000).
 - `hybrid_bm25` adds SQLite FTS5 BM25 lexical retrieval and weighted Reciprocal Rank Fusion. On this corpus it matched dense retrieval's hit rate (1.0000), which means the answerable questions were not hard enough to expose a BM25 recall gain.
+- Hybrid retrieval without reranking can over-retrieve lexically related but insufficient chunks on unsupported questions; its abstention accuracy was 0.0000.
 - `hybrid_bm25_reranked` applies an OpenAI answerability reranker. The main measured gain was no-answer behavior: abstention accuracy moved from 0.5000 to 1.0000.
 - Precision@K is capped at 0.2000 for this dataset because each answerable question has one expected document and the benchmark retrieves K=5 candidates.
 - The takeaway is that OpenAI embeddings are already strong on clean single-hop policy questions; the reranker adds value by rejecting retrieved-but-insufficient context.
@@ -36,7 +37,7 @@ This report compares retrieval quality on a synthetic but realistic benchmark co
 | hr-remote-reimbursement | atlas-hr-benefits | atlas-hr-benefits | atlas-hr-benefits | atlas-hr-benefits |
 | security-sev1-page | atlas-security-runbook | atlas-security-runbook | atlas-security-runbook | atlas-security-runbook |
 | security-keyword | atlas-security-runbook | atlas-security-runbook | atlas-security-runbook | atlas-security-runbook |
-| data-retention | atlas-data-governance | atlas-data-governance | atlas-data-governance, atlas-vendor-risk | atlas-data-governance, atlas-vendor-risk |
+| data-retention | atlas-data-governance | atlas-data-governance | atlas-data-governance | atlas-data-governance |
 | ai-tool-policy | atlas-data-governance | atlas-data-governance, atlas-vendor-risk | atlas-data-governance, atlas-vendor-risk | atlas-data-governance, atlas-vendor-risk |
 | orion-panels | atlas-product-orion | atlas-product-orion | atlas-product-orion | atlas-product-orion |
 | orion-flag | atlas-product-orion | atlas-product-orion | atlas-product-orion | atlas-product-orion |
@@ -52,7 +53,7 @@ This report compares retrieval quality on a synthetic but realistic benchmark co
 | vendor-high-risk | atlas-vendor-risk | atlas-vendor-risk | atlas-vendor-risk | atlas-vendor-risk |
 | oncall-ack | atlas-engineering-oncall | atlas-engineering-oncall | atlas-engineering-oncall | atlas-engineering-oncall |
 | pir-draft | atlas-engineering-oncall | atlas-engineering-oncall | atlas-engineering-oncall | atlas-engineering-oncall |
-| filter-trap-qdrant-support | ABSTAIN | ABSTAIN | ABSTAIN | ABSTAIN |
+| filter-trap-qdrant-support | ABSTAIN | ABSTAIN | atlas-support-refunds | ABSTAIN |
 | unknown-zurich-phone | ABSTAIN | atlas-disaster-recovery | atlas-disaster-recovery | ABSTAIN |
 
 ## Caveats
