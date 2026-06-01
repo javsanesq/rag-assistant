@@ -137,6 +137,21 @@ class EvalRunRequest(BaseModel):
     top_k: int | None = None
     filters: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("dataset_name")
+    @classmethod
+    def validate_dataset_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("dataset_name is required.")
+        if "/" in stripped or "\\" in stripped or ".." in stripped:
+            raise ValueError("dataset_name must be a JSONL filename, not a path.")
+        if not stripped.endswith(".jsonl"):
+            raise ValueError("dataset_name must end with .jsonl.")
+        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        if any(char not in allowed for char in stripped):
+            raise ValueError("dataset_name may only contain letters, numbers, dots, underscores, and hyphens.")
+        return stripped
+
 
 class HealthResponse(BaseModel):
     status: Literal["ok"]

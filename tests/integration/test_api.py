@@ -123,3 +123,9 @@ def test_eval_datasets_are_listed(client):
     assert response.status_code == 200
     datasets = response.json()["datasets"]
     assert any(item["name"] == "portfolio_eval.jsonl" and item["status"] == "valid" for item in datasets)
+
+
+def test_eval_dataset_name_rejects_paths(client):
+    response = client.post("/api/v1/evals/runs", json={"dataset_name": "../portfolio_eval.jsonl"})
+
+    assert response.status_code == 422
